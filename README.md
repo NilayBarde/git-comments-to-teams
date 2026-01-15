@@ -1,14 +1,15 @@
 # PR Comment Notifier
 
-A self-hosted webhook server that receives GitHub PR and GitLab MR comments and posts notifications to Microsoft Teams.
+A self-hosted webhook server that receives GitHub PR and GitLab MR events and posts notifications to Microsoft Teams.
 
 ## Features
 
-- Real-time notifications for comments on YOUR PRs/MRs only
-- Filters out your own comments (no self-notifications)
-- Rich Adaptive Card formatting in Teams
-- Support for both GitHub and GitLab (including enterprise instances)
-- Webhook signature/token verification for security
+- **Comments on YOUR PRs/MRs** - Get notified when someone comments on your code
+- **@Mentions** - Get notified when someone mentions you or your team (e.g., `@bet-squad-web`)
+- **MR/PR Merged** - Get notified when your merge request is merged
+- **Filters out self-comments** - No notifications for your own comments
+- **Rich Adaptive Cards** - Beautiful formatting in Teams
+- **GitHub + GitLab support** - Including enterprise instances
 
 ## Quick Start
 
@@ -41,6 +42,9 @@ GITLAB_USER_ID=12345
 # GitHub config  
 GITHUB_USERNAME=your-github-username
 
+# Team aliases to watch for @mentions (comma-separated)
+MENTION_ALIASES=bet-squad-web,frontend-team
+
 # Optional: for testing, set to 'true' to receive your own comments
 ALLOW_SELF_COMMENTS=false
 ```
@@ -62,6 +66,16 @@ Your webhook URL will be: `https://your-app-name.onrender.com`
 ### 4. Set Up Webhooks
 
 Configure webhooks in your GitLab/GitHub repos to point to your Render URL (see detailed instructions below).
+
+---
+
+## Notification Types
+
+| Event | When You're Notified |
+|-------|---------------------|
+| **Comment** | Someone comments on YOUR MR/PR |
+| **@Mention** | Someone @mentions you or your team alias in ANY MR/PR |
+| **Merged** | YOUR MR/PR gets merged |
 
 ---
 
@@ -94,6 +108,7 @@ The easiest way:
 5. Press Enter - that number is your User ID
 
 Alternative via API:
+
 ```bash
 curl "https://gitlab.com/api/v4/users?username=YOUR_USERNAME"
 ```
@@ -105,7 +120,9 @@ curl "https://gitlab.com/api/v4/users?username=YOUR_USERNAME"
 2. Configure:
    - **URL**: `https://your-app.onrender.com/webhook/gitlab`
    - **Secret token**: (optional) create a token and set `GITLAB_WEBHOOK_TOKEN`
-   - **Trigger**: ✅ **Comments**
+   - **Trigger**: 
+     - ✅ **Comments** (for comment and @mention notifications)
+     - ✅ **Merge request events** (for merge notifications)
    - **Enable SSL verification**: Yes
 3. Click **Add webhook**
 4. Click **Test** → **Note events** to verify
@@ -119,8 +136,9 @@ curl "https://gitlab.com/api/v4/users?username=YOUR_USERNAME"
    - **Content type**: `application/json`
    - **Secret**: (optional) create a secret and set `GITHUB_WEBHOOK_SECRET`
    - **Events**: Select "Let me select individual events" then check:
-     - ✅ **Issue comments**
-     - ✅ **Pull request review comments**
+     - ✅ **Issue comments** (for comments)
+     - ✅ **Pull request review comments** (for code review comments)
+     - ✅ **Pull requests** (for merge notifications)
 3. Click **Add webhook**
 
 ---
@@ -156,6 +174,7 @@ node test-webhook.js github
 | `GITLAB_WEBHOOK_TOKEN` | No | Secret token for webhook verification |
 | `GITHUB_USERNAME` | For GitHub | Your GitHub username |
 | `GITHUB_WEBHOOK_SECRET` | No | Secret for webhook signature verification |
+| `MENTION_ALIASES` | No | Comma-separated team aliases to watch (e.g., `bet-squad-web,frontend-team`) |
 | `ALLOW_SELF_COMMENTS` | No | Set to `true` to receive your own comments (for testing) |
 | `PORT` | No | Server port (default: 3000) |
 
@@ -183,9 +202,11 @@ node test-webhook.js github
 ### Getting "not your PR/MR" errors
 
 1. Check Render logs for the comparison values:
+
    ```
    GitLab MR comparison: author_id="XXXXX" vs configured userId="YYYYY"
    ```
+
 2. Verify `GITLAB_USER_ID` matches your actual user ID (check with `gon.current_user_id` in browser console)
 3. For GitHub, verify `GITHUB_USERNAME` matches exactly (case-sensitive for some instances)
 
@@ -194,11 +215,18 @@ node test-webhook.js github
 1. Verify your Teams webhook URL is correct and the Workflow is active
 2. Check Render logs for errors sending to Teams
 3. Test the webhook URL manually:
+
    ```bash
    curl -X POST -H "Content-Type: application/json" \
      -d '{"type":"message","attachments":[{"contentType":"application/vnd.microsoft.card.adaptive","content":{"type":"AdaptiveCard","version":"1.4","body":[{"type":"TextBlock","text":"Test message"}]}}]}' \
      YOUR_TEAMS_WEBHOOK_URL
    ```
+
+### @Mentions not working
+
+1. Check that `MENTION_ALIASES` is set correctly (comma-separated, no spaces around commas)
+2. Verify the alias matches exactly how it appears in GitLab/GitHub (e.g., `@bet-squad-web`)
+3. Check Render logs for "Mention detected" messages
 
 ### Testing with your own comments
 
@@ -209,16 +237,19 @@ Set `ALLOW_SELF_COMMENTS=true` in your environment variables to receive notifica
 ## Deployment Alternatives
 
 ### Render (Recommended)
+
 - Free tier available
 - Auto-deploys from GitHub
 - Easy environment variable management
 
 ### Railway
+
 - $5/month free credit
 - Requires GitHub account verification
 - No cold starts
 
 ### Fly.io
+
 ```bash
 brew install flyctl
 fly auth login
@@ -227,6 +258,7 @@ fly secrets set TEAMS_WEBHOOK_URL=... GITLAB_USERNAME=... GITLAB_USER_ID=...
 ```
 
 ### Local with ngrok (Testing only)
+
 ```bash
 ngrok http 3000
 # Use the generated URL for webhooks

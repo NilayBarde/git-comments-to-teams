@@ -43,7 +43,10 @@ const GITHUB_SIGNATURE_HEADER = 'x-hub-signature-256';
 const GITLAB_TOKEN_HEADER = 'x-gitlab-token';
 const COMMENT_CREATED_ACTION = 'created';
 const NOTE_OBJECT_KIND = 'note';
+const MERGE_REQUEST_OBJECT_KIND = 'merge_request';
 const MERGE_REQUEST_TYPE = 'MergeRequest';
+const MERGE_ACTION = 'merge';
+const PR_CLOSED_ACTION = 'closed';
 
 // Parse JSON body
 app.use(express.json());
@@ -89,6 +92,99 @@ function isOwnPullRequest(source, prAuthor) {
     return prAuthorStr === configuredUserIdStr;
   }
   return false;
+}
+
+/**
+ * Check if the user or their team aliases are mentioned in a comment
+ */
+function isMentioned(commentBody, source) {
+  if (!commentBody) return false;
+  
+  // Get the user's username for the source
+  const username = source === 'github' 
+    ? _.get(config, 'github.username', '')
+    : _.get(config, 'gitlab.username', '');
+  
+  // Get additional team aliases from env
+  const aliasesStr = process.env.MENTION_ALIASES || '';
+  const aliases = aliasesStr.split(',').map(a => a.trim()).filter(Boolean);
+  
+  // Combine username and aliases
+  const allNames = [username, ...aliases].filter(Boolean);
+  
+  // Check if any name is mentioned
+  const mentioned = allNames.find(name => {
+    const pattern = new RegExp(`@${name}\\b`, 'i');
+    return pattern.test(commentBody);
+  });
+  
+  if (mentioned) {
+    console.log(`Mention detected: @${mentioned}`);
+    return mentioned;
+  }
+  
+  return false;
+}
+
+/**
+ * Parse GitLab MR merge event webhook payload
+ */
+function parseGitLabMergeEvent(body) {
+  const objectKind = _.get(body, 'object_kind');
+  if (objectKind !== MERGE_REQUEST_OBJECT_KIND) return;
+
+  const action = _.get(body, 'object_attributes.action');
+  if (action !== MERGE_ACTION) return;
+
+  const mergeRequest = _.get(body, 'object_attributes');
+  if (!mergeRequest) return;
+
+  const prAuthor = _.get(mergeRequest, 'author_id');
+  const prTitle = _.get(mergeRequest, 'title', '');
+  const prUrl = _.get(mergeRequest, 'url', '');
+  const mergedBy = _.get(body, 'user.username', '');
+  const repoName = _.get(body, 'project.path_with_namespace', '');
+
+  return {
+    type: 'merge',
+    source: 'gitlab',
+    prAuthor,
+    prTitle,
+    prUrl,
+    mergedBy,
+    repoName
+  };
+}
+
+/**
+ * Parse GitHub PR merge event webhook payload
+ */
+function parseGitHubMergeEvent(body) {
+  const action = _.get(body, 'action');
+  if (action !== PR_CLOSED_ACTION) return;
+
+  const pullRequest = _.get(body, 'pull_request');
+  if (!pullRequest) return;
+
+  // Check if it was actually merged (not just closed)
+  const merged = _.get(pullRequest, 'merged', false);
+  if (!merged) return;
+
+  const prAuthor = _.get(pullRequest, 'user.login', '');
+  const prTitle = _.get(pullRequest, 'title', '');
+  const prUrl = _.get(pullRequest, 'html_url', '');
+  const mergedBy = _.get(pullRequest, 'merged_by.login', '') || _.get(body, 'sender.login', '');
+  const repoName = _.get(body, 'repository.full_name', '');
+
+  return {
+    type: 'merge',
+    source: 'github',
+    prAuthor,
+    prTitle,
+    prUrl,
+    mergedBy,
+    repoName
+  };
 }
 
 /**
@@ -278,6 +374,124 @@ function createAdaptiveCard(data) {
 }
 
 /**
+ * Create Teams Adaptive Card for mention notifications
+ */
+function createMentionCard(data, mentionedAs) {
+  const { source, prTitle, prUrl, commentAuthor, commentBody, commentUrl, repoName } = data;
+  const sourceLabel = source === 'github' ? 'GitHub' : 'GitLab';
+  const prLabel = source === 'github' ? 'PR' : 'MR';
+  
+  // Truncate comment body if too long
+  const truncatedBody = commentBody.length > 500 
+    ? commentBody.substring(0, 500) + '...' 
+    : commentBody;
+
+  const card = {
+    type: 'message',
+    attachments: [
+      {
+        contentType: 'application/vnd.microsoft.card.adaptive',
+        contentUrl: null,
+        content: {
+          type: 'AdaptiveCard',
+          $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+          version: '1.4',
+          body: [
+            {
+              type: 'TextBlock',
+              text: `You Were Mentioned (@${mentionedAs})`,
+              weight: 'Bolder',
+              size: 'Medium',
+              color: 'Attention'
+            },
+            {
+              type: 'FactSet',
+              facts: [
+                { title: 'Source:', value: sourceLabel },
+                { title: 'Repository:', value: repoName },
+                { title: `${prLabel}:`, value: prTitle },
+                { title: 'Mentioned by:', value: commentAuthor }
+              ]
+            },
+            {
+              type: 'TextBlock',
+              text: truncatedBody,
+              wrap: true,
+              separator: true
+            }
+          ],
+          actions: [
+            {
+              type: 'Action.OpenUrl',
+              title: 'View Comment',
+              url: commentUrl
+            },
+            {
+              type: 'Action.OpenUrl',
+              title: `View ${prLabel}`,
+              url: prUrl
+            }
+          ]
+        }
+      }
+    ]
+  };
+
+  return card;
+}
+
+/**
+ * Create Teams Adaptive Card for merge notifications
+ */
+function createMergeCard(data) {
+  const { source, prTitle, prUrl, mergedBy, repoName } = data;
+  const sourceLabel = source === 'github' ? 'GitHub' : 'GitLab';
+  const prLabel = source === 'github' ? 'PR' : 'MR';
+
+  const card = {
+    type: 'message',
+    attachments: [
+      {
+        contentType: 'application/vnd.microsoft.card.adaptive',
+        contentUrl: null,
+        content: {
+          type: 'AdaptiveCard',
+          $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+          version: '1.4',
+          body: [
+            {
+              type: 'TextBlock',
+              text: `Your ${prLabel} Was Merged! 🎉`,
+              weight: 'Bolder',
+              size: 'Medium',
+              color: 'Good'
+            },
+            {
+              type: 'FactSet',
+              facts: [
+                { title: 'Source:', value: sourceLabel },
+                { title: 'Repository:', value: repoName },
+                { title: `${prLabel}:`, value: prTitle },
+                { title: 'Merged by:', value: mergedBy }
+              ]
+            }
+          ],
+          actions: [
+            {
+              type: 'Action.OpenUrl',
+              title: `View ${prLabel}`,
+              url: prUrl
+            }
+          ]
+        }
+      }
+    ]
+  };
+
+  return card;
+}
+
+/**
  * Send notification to Teams
  */
 async function sendToTeams(card) {
@@ -312,8 +526,32 @@ async function sendToTeams(card) {
  * Process incoming webhook and send to Teams if applicable
  */
 async function processWebhook(source, data, signature) {
-  let parsed;
+  // First, check for merge events
+  let mergeEvent;
+  if (source === 'github') {
+    mergeEvent = parseGitHubMergeEvent(data);
+  } else if (source === 'gitlab') {
+    mergeEvent = parseGitLabMergeEvent(data);
+  }
 
+  // Handle merge events
+  if (mergeEvent) {
+    const { prAuthor } = mergeEvent;
+    
+    // Only notify if it's YOUR MR that was merged
+    if (isOwnPullRequest(source, prAuthor.toString())) {
+      console.log(`Processing ${source} merge event for "${mergeEvent.prTitle}"`);
+      const card = createMergeCard(mergeEvent);
+      const sent = await sendToTeams(card);
+      return { processed: sent, type: 'merge', data: mergeEvent };
+    }
+    
+    console.log(`Ignoring merge event - not your ${source === 'github' ? 'PR' : 'MR'}`);
+    return { processed: false, reason: 'not your PR/MR merge' };
+  }
+
+  // Then, check for comment events
+  let parsed;
   if (source === 'github') {
     // Try parsing as PR review comment first, then as issue comment
     parsed = parseGitHubReviewPayload(data) || parseGitHubPayload(data);
@@ -322,11 +560,11 @@ async function processWebhook(source, data, signature) {
   }
 
   if (!parsed) {
-    console.log(`Ignoring ${source} event - not a PR/MR comment`);
-    return { processed: false, reason: 'not a PR/MR comment' };
+    console.log(`Ignoring ${source} event - not a PR/MR comment or merge`);
+    return { processed: false, reason: 'not a PR/MR comment or merge' };
   }
 
-  const { prAuthor, commentAuthor } = parsed;
+  const { prAuthor, commentAuthor, commentBody } = parsed;
 
   // Don't notify for your own comments (unless ALLOW_SELF_COMMENTS is set for testing)
   const allowSelfComments = process.env.ALLOW_SELF_COMMENTS === 'true';
@@ -335,18 +573,29 @@ async function processWebhook(source, data, signature) {
     return { processed: false, reason: 'self-comment' };
   }
 
-  // Only notify if it's your PR/MR
-  if (!isOwnPullRequest(source, prAuthor.toString())) {
-    console.log(`Ignoring - not your ${source === 'github' ? 'PR' : 'MR'}`);
-    return { processed: false, reason: 'not your PR/MR' };
+  // Check if it's your PR/MR
+  const isYourPR = isOwnPullRequest(source, prAuthor.toString());
+  
+  // Check if you were mentioned in the comment
+  const mentionedAs = isMentioned(commentBody, source);
+  
+  // Notify if it's your PR OR if you were mentioned
+  if (isYourPR) {
+    console.log(`Processing ${source} comment from ${commentAuthor} on YOUR "${parsed.prTitle}"`);
+    const card = createAdaptiveCard(parsed);
+    const sent = await sendToTeams(card);
+    return { processed: sent, type: 'comment', data: parsed };
+  }
+  
+  if (mentionedAs) {
+    console.log(`Processing ${source} mention from ${commentAuthor} - mentioned as @${mentionedAs}`);
+    const card = createMentionCard(parsed, mentionedAs);
+    const sent = await sendToTeams(card);
+    return { processed: sent, type: 'mention', mentionedAs, data: parsed };
   }
 
-  console.log(`Processing ${source} comment from ${commentAuthor} on "${parsed.prTitle}"`);
-  
-  const card = createAdaptiveCard(parsed);
-  const sent = await sendToTeams(card);
-
-  return { processed: sent, data: parsed };
+  console.log(`Ignoring - not your ${source === 'github' ? 'PR' : 'MR'} and not mentioned`);
+  return { processed: false, reason: 'not your PR/MR and not mentioned' };
 }
 
 // GitHub webhook endpoint
