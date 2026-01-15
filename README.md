@@ -4,9 +4,11 @@ A self-hosted webhook server that receives GitHub PR and GitLab MR events and po
 
 ## Features
 
+- **Multi-User Support** - Route notifications to different Teams channels per user
 - **Comments on YOUR PRs/MRs** - Get notified when someone comments on your code
 - **@Mentions** - Get notified when someone mentions you or your team (e.g., `@bet-squad-web`)
 - **MR/PR Merged** - Get notified when your merge request is merged
+- **Approvals & Changes Requested** - Get notified on PR reviews
 - **Filters out self-comments** - No notifications for your own comments
 - **Rich Adaptive Cards** - Beautiful formatting in Teams
 - **GitHub + GitLab support** - Including enterprise instances
@@ -23,31 +25,17 @@ npm install
 
 ### 2. Configure Environment Variables
 
-Copy the example environment file:
+Create a `.env` file with your user configuration:
 
 ```bash
-cp .env.example .env
+USERS_CONFIG='[{"name":"nilay","teamsWebhookUrl":"https://your-teams-webhook-url","github":{"username":"NilayBarde"},"gitlab":{"username":"nilay.barde","userId":12345},"mentionAliases":["frontend-team","bet-squad-web"]}]'
+
+# Optional: webhook secrets for verification
+GITHUB_WEBHOOK_SECRET=your-github-secret
+GITLAB_WEBHOOK_TOKEN=your-gitlab-token
 ```
 
-Edit `.env` with your values:
-
-```bash
-# Teams webhook URL (required)
-TEAMS_WEBHOOK_URL=https://your-webhook-url...
-
-# GitLab config
-GITLAB_USERNAME=your-gitlab-username
-GITLAB_USER_ID=12345
-
-# GitHub config  
-GITHUB_USERNAME=your-github-username
-
-# Team aliases to watch for @mentions (comma-separated)
-MENTION_ALIASES=bet-squad-web,frontend-team
-
-# Optional: for testing, set to 'true' to receive your own comments
-ALLOW_SELF_COMMENTS=false
-```
+For multiple users, add more objects to the JSON array - each user gets their own Teams channel!
 
 ### 3. Deploy to Render (Recommended)
 
@@ -171,15 +159,43 @@ node test-webhook.js github
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `TEAMS_WEBHOOK_URL` | Yes | Your Teams Workflow webhook URL |
-| `GITLAB_USERNAME` | For GitLab | Your GitLab username |
-| `GITLAB_USER_ID` | For GitLab | Your GitLab numeric user ID |
-| `GITLAB_WEBHOOK_TOKEN` | No | Secret token for webhook verification |
-| `GITHUB_USERNAME` | For GitHub | Your GitHub username |
-| `GITHUB_WEBHOOK_SECRET` | No | Secret for webhook signature verification |
-| `MENTION_ALIASES` | No | Comma-separated team aliases to watch (e.g., `bet-squad-web,frontend-team`) |
-| `ALLOW_SELF_COMMENTS` | No | Set to `true` to receive your own comments (for testing) |
+| `USERS_CONFIG` | Yes | JSON array of user configurations (see below) |
+| `GITLAB_WEBHOOK_TOKEN` | No | Secret token for GitLab webhook verification |
+| `GITHUB_WEBHOOK_SECRET` | No | Secret for GitHub webhook signature verification |
 | `PORT` | No | Server port (default: 3000) |
+
+### USERS_CONFIG Structure
+
+Each user in the `USERS_CONFIG` array has the following fields:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Display name for logging |
+| `teamsWebhookUrl` | Yes | User's Teams Workflow webhook URL |
+| `github.username` | For GitHub | GitHub username |
+| `gitlab.username` | For GitLab | GitLab username |
+| `gitlab.userId` | For GitLab | GitLab numeric user ID |
+| `mentionAliases` | No | Array of team aliases to watch (e.g., `["frontend-team"]`) |
+
+**Example with multiple users:**
+
+```json
+[
+  {
+    "name": "nilay",
+    "teamsWebhookUrl": "https://...",
+    "github": { "username": "NilayBarde" },
+    "gitlab": { "username": "nilay.barde", "userId": 10957 },
+    "mentionAliases": ["frontend-team"]
+  },
+  {
+    "name": "john",
+    "teamsWebhookUrl": "https://...",
+    "github": { "username": "johndoe" },
+    "gitlab": { "username": "john.doe", "userId": 12345 }
+  }
+]
+```
 
 ---
 
@@ -202,16 +218,11 @@ node test-webhook.js github
 3. Check webhook delivery logs in GitHub/GitLab for errors
 4. Ensure SSL verification is enabled and your server has valid SSL (Render provides this)
 
-### Getting "not your PR/MR" errors
+### Getting "author not configured" errors
 
-1. Check Render logs for the comparison values:
-
-   ```
-   GitLab MR comparison: author_id="XXXXX" vs configured userId="YYYYY"
-   ```
-
-2. Verify `GITLAB_USER_ID` matches your actual user ID (check with `gon.current_user_id` in browser console)
-3. For GitHub, verify `GITHUB_USERNAME` matches exactly (case-sensitive for some instances)
+1. Check Render logs for the comparison - the PR/MR author isn't in your `USERS_CONFIG`
+2. Verify `gitlab.userId` in your user config matches your actual GitLab user ID (check with `gon.current_user_id` in browser console)
+3. For GitHub, verify `github.username` matches exactly (case-insensitive)
 
 ### Not receiving Teams notifications
 
@@ -227,13 +238,9 @@ node test-webhook.js github
 
 ### @Mentions not working
 
-1. Check that `MENTION_ALIASES` is set correctly (comma-separated, no spaces around commas)
+1. Check that `mentionAliases` is set correctly in your user config (JSON array of strings)
 2. Verify the alias matches exactly how it appears in GitLab/GitHub (e.g., `@bet-squad-web`)
-3. Check Render logs for "Mention detected" messages
-
-### Testing with your own comments
-
-Set `ALLOW_SELF_COMMENTS=true` in your environment variables to receive notifications for your own comments (useful for testing). Remember to remove this after testing!
+3. Check Render logs for "Processing mention" messages
 
 ---
 
@@ -257,7 +264,7 @@ Set `ALLOW_SELF_COMMENTS=true` in your environment variables to receive notifica
 brew install flyctl
 fly auth login
 fly launch
-fly secrets set TEAMS_WEBHOOK_URL=... GITLAB_USERNAME=... GITLAB_USER_ID=...
+fly secrets set USERS_CONFIG='[{"name":"you","teamsWebhookUrl":"https://...","gitlab":{"username":"you","userId":12345}}]'
 ```
 
 ### Local with ngrok (Testing only)
