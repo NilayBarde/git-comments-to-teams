@@ -68,12 +68,18 @@ function verifyGitLabToken(token) {
 function isOwnPullRequest(source, prAuthor) {
   if (source === 'github') {
     const configuredUsername = _.get(config, 'github.username', '').toLowerCase();
-    return prAuthor.toLowerCase() === configuredUsername;
+    const prAuthorLower = prAuthor.toLowerCase();
+    console.log(`GitHub comparison: MR author="${prAuthorLower}" vs configured="${configuredUsername}"`);
+    return prAuthorLower === configuredUsername;
   }
   if (source === 'gitlab') {
     const configuredUsername = _.get(config, 'gitlab.username', '').toLowerCase();
     const configuredUserId = _.get(config, 'gitlab.userId');
-    return prAuthor.toLowerCase() === configuredUsername || prAuthor === configuredUserId;
+    const prAuthorStr = String(prAuthor);
+    const configuredUserIdStr = String(configuredUserId);
+    console.log(`GitLab comparison: MR author="${prAuthorStr}" vs configured userId="${configuredUserIdStr}" username="${configuredUsername}"`);
+    // Compare as strings to handle type mismatches
+    return prAuthorStr.toLowerCase() === configuredUsername.toLowerCase() || prAuthorStr === configuredUserIdStr;
   }
   return false;
 }
