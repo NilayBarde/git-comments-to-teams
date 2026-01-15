@@ -315,8 +315,9 @@ async function processWebhook(source, data, signature) {
 
   const { prAuthor, commentAuthor } = parsed;
 
-  // Don't notify for your own comments
-  if (isOwnPullRequest(source, commentAuthor.toString())) {
+  // Don't notify for your own comments (unless ALLOW_SELF_COMMENTS is set for testing)
+  const allowSelfComments = process.env.ALLOW_SELF_COMMENTS === 'true';
+  if (!allowSelfComments && isOwnPullRequest(source, commentAuthor.toString())) {
     console.log('Ignoring self-comment');
     return { processed: false, reason: 'self-comment' };
   }
