@@ -46,7 +46,11 @@ const NOTE_OBJECT_KIND = 'note';
 const MERGE_REQUEST_OBJECT_KIND = 'merge_request';
 const MERGE_REQUEST_TYPE = 'MergeRequest';
 const MERGE_ACTION = 'merge';
+const APPROVED_ACTION = 'approved';
 const PR_CLOSED_ACTION = 'closed';
+const PR_REVIEW_SUBMITTED_ACTION = 'submitted';
+const PR_REVIEW_APPROVED_STATE = 'approved';
+const PR_REVIEW_CHANGES_REQUESTED_STATE = 'changes_requested';
 
 // Parse JSON body
 app.use(express.json());
@@ -188,6 +192,73 @@ function parseGitHubMergeEvent(body) {
 }
 
 /**
+ * Parse GitLab MR approval event webhook payload
+ */
+function parseGitLabApprovalEvent(body) {
+  const objectKind = _.get(body, 'object_kind');
+  if (objectKind !== MERGE_REQUEST_OBJECT_KIND) return;
+
+  const action = _.get(body, 'object_attributes.action');
+  if (action !== APPROVED_ACTION) return;
+
+  const mergeRequest = _.get(body, 'object_attributes');
+  if (!mergeRequest) return;
+
+  const prAuthor = _.get(mergeRequest, 'author_id');
+  const prTitle = _.get(mergeRequest, 'title', '');
+  const prUrl = _.get(mergeRequest, 'url', '');
+  const approvedBy = _.get(body, 'user.username', '');
+  const repoName = _.get(body, 'project.path_with_namespace', '');
+
+  return {
+    type: 'approval',
+    source: 'gitlab',
+    state: 'approved',
+    prAuthor,
+    prTitle,
+    prUrl,
+    reviewedBy: approvedBy,
+    repoName
+  };
+}
+
+/**
+ * Parse GitHub PR review event webhook payload (approvals and changes requested)
+ */
+function parseGitHubReviewEvent(body) {
+  const action = _.get(body, 'action');
+  if (action !== PR_REVIEW_SUBMITTED_ACTION) return;
+
+  const review = _.get(body, 'review');
+  const pullRequest = _.get(body, 'pull_request');
+  if (!review || !pullRequest) return;
+
+  const state = _.get(review, 'state', '').toLowerCase();
+  
+  // Only handle approved and changes_requested states
+  if (state !== PR_REVIEW_APPROVED_STATE && state !== PR_REVIEW_CHANGES_REQUESTED_STATE) return;
+
+  const prAuthor = _.get(pullRequest, 'user.login', '');
+  const prTitle = _.get(pullRequest, 'title', '');
+  const prUrl = _.get(pullRequest, 'html_url', '');
+  const reviewedBy = _.get(review, 'user.login', '');
+  const repoName = _.get(body, 'repository.full_name', '');
+  const reviewBody = _.get(review, 'body', '');
+
+  return {
+    type: 'approval',
+    source: 'github',
+    state, // 'approved' or 'changes_requested'
+    prAuthor,
+    prTitle,
+    prUrl,
+    reviewedBy,
+    repoName,
+    reviewBody
+  };
+}
+
+/**
  * Parse GitHub PR comment webhook payload
  */
 function parseGitHubPayload(body) {
@@ -307,6 +378,11 @@ function createAdaptiveCard(data) {
     ? commentBody.substring(0, 500) + '...' 
     : commentBody;
 
+  // Create dynamic title based on whether it's a code review comment or general comment
+  const title = filePath 
+    ? `💬 Code Review Comment from ${commentAuthor}` 
+    : `💬 ${commentAuthor} commented on your ${prLabel}`;
+
   const card = {
     type: 'message',
     attachments: [
@@ -320,7 +396,7 @@ function createAdaptiveCard(data) {
           body: [
             {
               type: 'TextBlock',
-              text: `New Comment on Your ${prLabel}`,
+              text: title,
               weight: 'Bolder',
               size: 'Medium',
               color: 'Accent'
@@ -399,7 +475,7 @@ function createMentionCard(data, mentionedAs) {
           body: [
             {
               type: 'TextBlock',
-              text: `You Were Mentioned (@${mentionedAs})`,
+              text: `📢 ${commentAuthor} mentioned you (@${mentionedAs})`,
               weight: 'Bolder',
               size: 'Medium',
               color: 'Attention'
@@ -461,7 +537,7 @@ function createMergeCard(data) {
           body: [
             {
               type: 'TextBlock',
-              text: `Your ${prLabel} Was Merged! 🎉`,
+              text: `🎉 ${mergedBy} merged your ${prLabel}`,
               weight: 'Bolder',
               size: 'Medium',
               color: 'Good'
@@ -487,6 +563,76 @@ function createMergeCard(data) {
       }
     ]
   };
+
+  return card;
+}
+
+/**
+ * Create Teams Adaptive Card for approval/review notifications
+ */
+function createApprovalCard(data) {
+  const { source, state, prTitle, prUrl, reviewedBy, repoName, reviewBody } = data;
+  const sourceLabel = source === 'github' ? 'GitHub' : 'GitLab';
+  const prLabel = source === 'github' ? 'PR' : 'MR';
+  
+  const isApproved = state === 'approved';
+  const title = isApproved 
+    ? `✅ ${reviewedBy} approved your ${prLabel}` 
+    : `⚠️ ${reviewedBy} requested changes on your ${prLabel}`;
+  const color = isApproved ? 'Good' : 'Warning';
+
+  const card = {
+    type: 'message',
+    attachments: [
+      {
+        contentType: 'application/vnd.microsoft.card.adaptive',
+        contentUrl: null,
+        content: {
+          type: 'AdaptiveCard',
+          $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+          version: '1.4',
+          body: [
+            {
+              type: 'TextBlock',
+              text: title,
+              weight: 'Bolder',
+              size: 'Medium',
+              color: color
+            },
+            {
+              type: 'FactSet',
+              facts: [
+                { title: 'Source:', value: sourceLabel },
+                { title: 'Repository:', value: repoName },
+                { title: `${prLabel}:`, value: prTitle },
+                { title: 'Reviewed by:', value: reviewedBy }
+              ]
+            }
+          ],
+          actions: [
+            {
+              type: 'Action.OpenUrl',
+              title: `View ${prLabel}`,
+              url: prUrl
+            }
+          ]
+        }
+      }
+    ]
+  };
+
+  // Add review comment if present
+  if (reviewBody) {
+    const truncatedBody = reviewBody.length > 500 
+      ? reviewBody.substring(0, 500) + '...' 
+      : reviewBody;
+    card.attachments[0].content.body.push({
+      type: 'TextBlock',
+      text: truncatedBody,
+      wrap: true,
+      separator: true
+    });
+  }
 
   return card;
 }
@@ -550,6 +696,31 @@ async function processWebhook(source, data, signature) {
     return { processed: false, reason: 'not your PR/MR merge' };
   }
 
+  // Check for approval/review events
+  let approvalEvent;
+  if (source === 'github') {
+    approvalEvent = parseGitHubReviewEvent(data);
+  } else if (source === 'gitlab') {
+    approvalEvent = parseGitLabApprovalEvent(data);
+  }
+
+  // Handle approval events
+  if (approvalEvent) {
+    const { prAuthor, state, reviewedBy } = approvalEvent;
+    
+    // Only notify if it's YOUR MR that was reviewed
+    if (isOwnPullRequest(source, prAuthor.toString())) {
+      const stateLabel = state === 'approved' ? 'approval' : 'changes requested';
+      console.log(`Processing ${source} ${stateLabel} from ${reviewedBy} for "${approvalEvent.prTitle}"`);
+      const card = createApprovalCard(approvalEvent);
+      const sent = await sendToTeams(card);
+      return { processed: sent, type: 'approval', state, data: approvalEvent };
+    }
+    
+    console.log(`Ignoring approval event - not your ${source === 'github' ? 'PR' : 'MR'}`);
+    return { processed: false, reason: 'not your PR/MR approval' };
+  }
+
   // Then, check for comment events
   let parsed;
   if (source === 'github') {
@@ -560,8 +731,8 @@ async function processWebhook(source, data, signature) {
   }
 
   if (!parsed) {
-    console.log(`Ignoring ${source} event - not a PR/MR comment or merge`);
-    return { processed: false, reason: 'not a PR/MR comment or merge' };
+    console.log(`Ignoring ${source} event - not a recognized PR/MR event`);
+    return { processed: false, reason: 'not a recognized PR/MR event' };
   }
 
   const { prAuthor, commentAuthor, commentBody } = parsed;

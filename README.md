@@ -75,7 +75,9 @@ Configure webhooks in your GitLab/GitHub repos to point to your Render URL (see 
 |-------|---------------------|
 | **Comment** | Someone comments on YOUR MR/PR |
 | **@Mention** | Someone @mentions you or your team alias in ANY MR/PR |
-| **Merged** | YOUR MR/PR gets merged |
+| **Approved** | YOUR MR/PR is approved by a reviewer ✅ |
+| **Changes Requested** | A reviewer requests changes on YOUR MR/PR ⚠️ |
+| **Merged** | YOUR MR/PR gets merged 🎉 |
 
 ---
 
@@ -120,7 +122,7 @@ curl "https://gitlab.com/api/v4/users?username=YOUR_USERNAME"
 2. Configure:
    - **URL**: `https://your-app.onrender.com/webhook/gitlab`
    - **Secret token**: (optional) create a token and set `GITLAB_WEBHOOK_TOKEN`
-   - **Trigger**: 
+   - **Trigger**:
      - ✅ **Comments** (for comment and @mention notifications)
      - ✅ **Merge request events** (for merge notifications)
    - **Enable SSL verification**: Yes
@@ -138,6 +140,7 @@ curl "https://gitlab.com/api/v4/users?username=YOUR_USERNAME"
    - **Events**: Select "Let me select individual events" then check:
      - ✅ **Issue comments** (for comments)
      - ✅ **Pull request review comments** (for code review comments)
+     - ✅ **Pull request reviews** (for approvals and changes requested)
      - ✅ **Pull requests** (for merge notifications)
 3. Click **Add webhook**
 
