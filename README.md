@@ -7,124 +7,159 @@ A self-hosted webhook server that receives GitHub PR and GitLab MR comments and 
 - Real-time notifications for comments on YOUR PRs/MRs only
 - Filters out your own comments (no self-notifications)
 - Rich Adaptive Card formatting in Teams
-- Support for both GitHub and GitLab
+- Support for both GitHub and GitLab (including enterprise instances)
 - Webhook signature/token verification for security
 
 ## Quick Start
 
-### 1. Install Dependencies
+### 1. Clone and Install
 
 ```bash
+git clone <repo-url>
 cd pr-comment-notifier
 npm install
 ```
 
-### 2. Create Configuration
+### 2. Configure Environment Variables
+
+Copy the example environment file:
 
 ```bash
-cp config.example.json config.json
+cp .env.example .env
 ```
 
-Edit `config.json` with your values:
-
-```json
-{
-  "port": 3000,
-  "teamsWebhookUrl": "YOUR_TEAMS_INCOMING_WEBHOOK_URL",
-  "github": {
-    "username": "YOUR_GITHUB_USERNAME",
-    "webhookSecret": "YOUR_GITHUB_WEBHOOK_SECRET"
-  },
-  "gitlab": {
-    "username": "YOUR_GITLAB_USERNAME",
-    "userId": 12345,
-    "webhookToken": "YOUR_GITLAB_WEBHOOK_TOKEN"
-  }
-}
-```
-
-### 3. Start the Server
+Edit `.env` with your values:
 
 ```bash
-npm start
+# Teams webhook URL (required)
+TEAMS_WEBHOOK_URL=https://your-webhook-url...
+
+# GitLab config
+GITLAB_USERNAME=your-gitlab-username
+GITLAB_USER_ID=12345
+
+# GitHub config  
+GITHUB_USERNAME=your-github-username
+
+# Optional: for testing, set to 'true' to receive your own comments
+ALLOW_SELF_COMMENTS=false
 ```
 
-Or for development with auto-reload:
+### 3. Deploy to Render (Recommended)
 
-```bash
-npm run dev
-```
+1. Push this repo to GitHub
+2. Go to [render.com](https://render.com) and sign up
+3. Click **New** → **Web Service** → Connect your GitHub repo
+4. Configure:
+   - **Build Command**: `npm install`
+   - **Start Command**: `npm start`
+   - **Instance Type**: Free
+5. Add your environment variables in **Environment** tab
+6. Deploy!
 
-## Setup Instructions
+Your webhook URL will be: `https://your-app-name.onrender.com`
 
-### Setting Up Teams Incoming Webhook
+### 4. Set Up Webhooks
+
+Configure webhooks in your GitLab/GitHub repos to point to your Render URL (see detailed instructions below).
+
+---
+
+## Detailed Setup Instructions
+
+### Setting Up Teams Webhook (Workflows)
+
+> **Note**: Microsoft has deprecated classic "Incoming Webhook" connectors. Use Teams Workflows instead.
 
 1. Open Microsoft Teams
-2. Go to the channel where you want notifications
-3. Click the `...` menu next to the channel name
-4. Select **Connectors** (or **Workflows** > **Create a workflow**)
-5. Search for **Incoming Webhook**
-6. Click **Configure**
-7. Give it a name (e.g., "PR Comments") and optionally upload an image
-8. Click **Create**
-9. Copy the webhook URL and paste it into your `config.json` as `teamsWebhookUrl`
+2. Click **Apps** (left sidebar) → Search **Workflows**
+3. Click **Create** tab
+4. Search for "**Send webhook alerts to a channel**" template
+5. Click it and follow the setup:
+   - Select your Team and Channel
+   - Give it a name (e.g., "PR Comment Alerts")
+6. After saving, the workflow will show you the **HTTP POST URL**
+7. Copy that URL - this is your `TEAMS_WEBHOOK_URL`
 
-### Setting Up GitHub Webhook
-
-1. Go to your GitHub repository (or organization settings for all repos)
-2. Navigate to **Settings** > **Webhooks** > **Add webhook**
-3. Configure:
-   - **Payload URL**: `https://your-server.com/webhook/github`
-   - **Content type**: `application/json`
-   - **Secret**: Create a secret and add it to your `config.json` as `github.webhookSecret`
-   - **SSL verification**: Enable if using HTTPS
-   - **Events**: Select "Let me select individual events" then check:
-     - **Issue comments**
-     - **Pull request review comments**
-4. Click **Add webhook**
-
-### Setting Up GitLab Webhook
-
-1. Go to your GitLab project (or group settings for all projects)
-2. Navigate to **Settings** > **Webhooks**
-3. Configure:
-   - **URL**: `https://your-server.com/webhook/gitlab`
-   - **Secret token**: Create a token and add it to your `config.json` as `gitlab.webhookToken`
-   - **Trigger**: Check **Comments** (Note events)
-   - **Enable SSL verification**: Yes (if using HTTPS)
-4. Click **Add webhook**
+**Tip**: Create a private channel just for yourself if you want personal notifications.
 
 ### Finding Your GitLab User ID
 
-1. Go to your GitLab profile page
-2. Look at the URL: `https://gitlab.com/users/your-username`
-3. Or check the page - your ID is usually displayed on your profile
-4. You can also use the API: `curl "https://gitlab.com/api/v4/users?username=YOUR_USERNAME"`
+The easiest way:
 
-## Exposing to the Internet
+1. Go to your GitLab instance and log in
+2. Open browser Developer Tools (Cmd+Option+I or F12)
+3. Go to **Console** tab
+4. Type: `gon.current_user_id`
+5. Press Enter - that number is your User ID
 
-For GitHub/GitLab to send webhooks to your server, it needs to be accessible from the internet. Options:
-
-### Option A: ngrok (for testing)
-
+Alternative via API:
 ```bash
-ngrok http 3000
+curl "https://gitlab.com/api/v4/users?username=YOUR_USERNAME"
 ```
 
-Use the generated URL (e.g., `https://abc123.ngrok.io`) as your webhook URL.
+### Setting Up GitLab Webhook
 
-### Option B: Deploy to a Cloud Service
+1. Go to your GitLab **project** → **Settings** → **Webhooks**
+   - (Or **group** settings to cover all projects in a group)
+2. Configure:
+   - **URL**: `https://your-app.onrender.com/webhook/gitlab`
+   - **Secret token**: (optional) create a token and set `GITLAB_WEBHOOK_TOKEN`
+   - **Trigger**: ✅ **Comments**
+   - **Enable SSL verification**: Yes
+3. Click **Add webhook**
+4. Click **Test** → **Note events** to verify
 
-- **Heroku**: Free tier available
-- **Railway**: Easy deployment
-- **Render**: Free tier available
-- **AWS/GCP/Azure**: For production use
+### Setting Up GitHub Webhook
 
-### Option C: Use Cloudflare Tunnel
+1. Go to your GitHub **repository** → **Settings** → **Webhooks** → **Add webhook**
+   - (Or **organization** settings for all repos)
+2. Configure:
+   - **Payload URL**: `https://your-app.onrender.com/webhook/github`
+   - **Content type**: `application/json`
+   - **Secret**: (optional) create a secret and set `GITHUB_WEBHOOK_SECRET`
+   - **Events**: Select "Let me select individual events" then check:
+     - ✅ **Issue comments**
+     - ✅ **Pull request review comments**
+3. Click **Add webhook**
+
+---
+
+## Local Development
+
+For local testing:
 
 ```bash
-cloudflared tunnel --url http://localhost:3000
+# Start the server
+npm start
+
+# Or with auto-reload
+npm run dev
 ```
+
+To test webhooks locally, use the test script:
+
+```bash
+node test-webhook.js gitlab
+node test-webhook.js github
+```
+
+---
+
+## Environment Variables Reference
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `TEAMS_WEBHOOK_URL` | Yes | Your Teams Workflow webhook URL |
+| `GITLAB_USERNAME` | For GitLab | Your GitLab username |
+| `GITLAB_USER_ID` | For GitLab | Your GitLab numeric user ID |
+| `GITLAB_WEBHOOK_TOKEN` | No | Secret token for webhook verification |
+| `GITHUB_USERNAME` | For GitHub | Your GitHub username |
+| `GITHUB_WEBHOOK_SECRET` | No | Secret for webhook signature verification |
+| `ALLOW_SELF_COMMENTS` | No | Set to `true` to receive your own comments (for testing) |
+| `PORT` | No | Server port (default: 3000) |
+
+---
 
 ## API Endpoints
 
@@ -134,18 +169,30 @@ cloudflared tunnel --url http://localhost:3000
 | `/webhook/gitlab` | POST | Receives GitLab webhook events |
 | `/health` | GET | Health check endpoint |
 
+---
+
 ## Troubleshooting
 
 ### Webhook not receiving events
 
-1. Check that your server is accessible from the internet
+1. Check Render logs for incoming requests
 2. Verify the webhook URL is correct in GitHub/GitLab settings
-3. Check the webhook delivery logs in GitHub/GitLab for errors
+3. Check webhook delivery logs in GitHub/GitLab for errors
+4. Ensure SSL verification is enabled and your server has valid SSL (Render provides this)
+
+### Getting "not your PR/MR" errors
+
+1. Check Render logs for the comparison values:
+   ```
+   GitLab MR comparison: author_id="XXXXX" vs configured userId="YYYYY"
+   ```
+2. Verify `GITLAB_USER_ID` matches your actual user ID (check with `gon.current_user_id` in browser console)
+3. For GitHub, verify `GITHUB_USERNAME` matches exactly (case-sensitive for some instances)
 
 ### Not receiving Teams notifications
 
-1. Verify your Teams webhook URL is correct
-2. Check server logs for errors
+1. Verify your Teams webhook URL is correct and the Workflow is active
+2. Check Render logs for errors sending to Teams
 3. Test the webhook URL manually:
    ```bash
    curl -X POST -H "Content-Type: application/json" \
@@ -153,11 +200,39 @@ cloudflared tunnel --url http://localhost:3000
      YOUR_TEAMS_WEBHOOK_URL
    ```
 
-### Notifications for wrong PRs
+### Testing with your own comments
 
-1. Verify your username is correct in `config.json`
-2. For GitLab, ensure both `username` and `userId` are correct
-3. Check that usernames are lowercase (GitHub) or match exactly (GitLab)
+Set `ALLOW_SELF_COMMENTS=true` in your environment variables to receive notifications for your own comments (useful for testing). Remember to remove this after testing!
+
+---
+
+## Deployment Alternatives
+
+### Render (Recommended)
+- Free tier available
+- Auto-deploys from GitHub
+- Easy environment variable management
+
+### Railway
+- $5/month free credit
+- Requires GitHub account verification
+- No cold starts
+
+### Fly.io
+```bash
+brew install flyctl
+fly auth login
+fly launch
+fly secrets set TEAMS_WEBHOOK_URL=... GITLAB_USERNAME=... GITLAB_USER_ID=...
+```
+
+### Local with ngrok (Testing only)
+```bash
+ngrok http 3000
+# Use the generated URL for webhooks
+```
+
+---
 
 ## License
 
