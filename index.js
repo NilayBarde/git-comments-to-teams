@@ -8,33 +8,55 @@ const _ = require('lodash');
 // Load configuration from environment variables
 const config = {
   port: process.env.PORT || 3000,
-  teamsWebhookUrl: process.env.TEAMS_WEBHOOK_URL,
   github: {
-    username: process.env.GITHUB_USERNAME,
     webhookSecret: process.env.GITHUB_WEBHOOK_SECRET
   },
   gitlab: {
-    username: process.env.GITLAB_USERNAME,
-    userId: process.env.GITLAB_USER_ID ? parseInt(process.env.GITLAB_USER_ID, 10) : undefined,
     webhookToken: process.env.GITLAB_WEBHOOK_TOKEN
   }
 };
 
-// Log config for debugging
-console.log('Config loaded:', {
-  teamsWebhookUrl: config.teamsWebhookUrl ? 'SET' : 'NOT SET',
-  gitlabUsername: config.gitlab.username,
-  gitlabUserId: config.gitlab.userId,
-  githubUsername: config.github.username
-});
-
-// Validate required config
-if (!config.teamsWebhookUrl) {
-  console.error('Error: TEAMS_WEBHOOK_URL environment variable is required');
-  console.error('For local dev: create a .env file (copy from .env.example)');
-  console.error('For production: set environment variables in your hosting platform');
+// Parse USERS_CONFIG from environment variable
+let users = [];
+try {
+  const usersConfigStr = process.env.USERS_CONFIG;
+  if (!usersConfigStr) {
+    console.error('Error: USERS_CONFIG environment variable is required');
+    console.error('See README.md for the expected format');
+    process.exit(1);
+  }
+  users = JSON.parse(usersConfigStr);
+  if (!Array.isArray(users) || users.length === 0) {
+    console.error('Error: USERS_CONFIG must be a non-empty JSON array');
+    process.exit(1);
+  }
+} catch (error) {
+  console.error('Error parsing USERS_CONFIG:', error.message);
   process.exit(1);
 }
+
+// Validate each user config
+users.forEach((user, index) => {
+  if (!user.name) {
+    console.error(`Error: User at index ${index} is missing required "name" field`);
+    process.exit(1);
+  }
+  if (!user.teamsWebhookUrl) {
+    console.error(`Error: User "${user.name}" is missing required "teamsWebhookUrl" field`);
+    process.exit(1);
+  }
+});
+
+// Log config for debugging
+console.log('Config loaded:', {
+  usersCount: users.length,
+  users: users.map(u => ({
+    name: u.name,
+    teamsWebhookUrl: u.teamsWebhookUrl ? 'SET' : 'NOT SET',
+    github: u.github?.username,
+    gitlab: `${u.gitlab?.username} (${u.gitlab?.userId})`
+  }))
+});
 
 const app = express();
 
@@ -77,57 +99,75 @@ function verifyGitLabToken(token) {
 }
 
 /**
- * Check if the PR/MR belongs to the configured user
+ * Find the user whose PR/MR this is based on the author
+ * @returns {Object|undefined} The user object if found, undefined otherwise
  */
-function isOwnPullRequest(source, prAuthor) {
+function findPROwner(source, prAuthor) {
+  const prAuthorStr = String(prAuthor).toLowerCase();
+  
+  return users.find(user => {
+    if (source === 'github') {
+      const githubUsername = _.get(user, 'github.username', '').toLowerCase();
+      return prAuthorStr === githubUsername;
+    }
+    if (source === 'gitlab') {
+      const gitlabUserId = String(_.get(user, 'gitlab.userId', ''));
+      return prAuthorStr === gitlabUserId;
+    }
+    return false;
+  });
+}
+
+/**
+ * Check if a user authored this comment (to avoid self-notifications)
+ */
+function isCommentAuthor(user, source, commentAuthor) {
+  const commentAuthorLower = String(commentAuthor).toLowerCase();
+  
   if (source === 'github') {
-    const configuredUsername = _.get(config, 'github.username', '').toLowerCase();
-    const prAuthorLower = String(prAuthor).toLowerCase();
-    console.log(`GitHub PR comparison: author="${prAuthorLower}" vs configured="${configuredUsername}"`);
-    return prAuthorLower === configuredUsername;
+    const githubUsername = _.get(user, 'github.username', '').toLowerCase();
+    return commentAuthorLower === githubUsername;
   }
   if (source === 'gitlab') {
-    const configuredUsername = _.get(config, 'gitlab.username', '').toLowerCase();
-    const configuredUserId = _.get(config, 'gitlab.userId');
-    const prAuthorStr = String(prAuthor);
-    const configuredUserIdStr = String(configuredUserId);
-    console.log(`GitLab MR comparison: author_id="${prAuthorStr}" vs configured userId="${configuredUserIdStr}" username="${configuredUsername}"`);
-    // Compare as strings to handle type mismatches
-    return prAuthorStr === configuredUserIdStr;
+    const gitlabUsername = _.get(user, 'gitlab.username', '').toLowerCase();
+    return commentAuthorLower === gitlabUsername;
   }
   return false;
 }
 
 /**
- * Check if the user or their team aliases are mentioned in a comment
+ * Find all users who are mentioned in a comment
+ * @returns {Array<{user: Object, mentionedAs: string}>} Array of user/mention pairs
  */
-function isMentioned(commentBody, source) {
-  if (!commentBody) return false;
+function findMentionedUsers(commentBody, source) {
+  if (!commentBody) return [];
   
-  // Get the user's username for the source
-  const username = source === 'github' 
-    ? _.get(config, 'github.username', '')
-    : _.get(config, 'gitlab.username', '');
+  const mentionedUsers = [];
   
-  // Get additional team aliases from env
-  const aliasesStr = process.env.MENTION_ALIASES || '';
-  const aliases = aliasesStr.split(',').map(a => a.trim()).filter(Boolean);
-  
-  // Combine username and aliases
-  const allNames = [username, ...aliases].filter(Boolean);
-  
-  // Check if any name is mentioned
-  const mentioned = allNames.find(name => {
-    const pattern = new RegExp(`@${name}\\b`, 'i');
-    return pattern.test(commentBody);
+  users.forEach(user => {
+    // Get the user's username for the source
+    const username = source === 'github' 
+      ? _.get(user, 'github.username', '')
+      : _.get(user, 'gitlab.username', '');
+    
+    // Get additional team aliases for this user
+    const aliases = _.get(user, 'mentionAliases', []);
+    
+    // Combine username and aliases
+    const allNames = [username, ...aliases].filter(Boolean);
+    
+    // Check if any name is mentioned
+    const mentioned = allNames.find(name => {
+      const pattern = new RegExp(`@${name}\\b`, 'i');
+      return pattern.test(commentBody);
+    });
+    
+    if (mentioned) {
+      mentionedUsers.push({ user, mentionedAs: mentioned });
+    }
   });
   
-  if (mentioned) {
-    console.log(`Mention detected: @${mentioned}`);
-    return mentioned;
-  }
-  
-  return false;
+  return mentionedUsers;
 }
 
 /**
@@ -639,11 +679,12 @@ function createApprovalCard(data) {
 
 /**
  * Send notification to Teams
+ * @param {Object} card - The Adaptive Card to send
+ * @param {string} webhookUrl - The Teams webhook URL to send to
  */
-async function sendToTeams(card) {
-  const webhookUrl = _.get(config, 'teamsWebhookUrl');
-  if (!webhookUrl || webhookUrl === 'YOUR_TEAMS_INCOMING_WEBHOOK_URL') {
-    console.error('Teams webhook URL not configured');
+async function sendToTeams(card, webhookUrl) {
+  if (!webhookUrl) {
+    console.error('Teams webhook URL not provided');
     return false;
   }
 
@@ -672,6 +713,9 @@ async function sendToTeams(card) {
  * Process incoming webhook and send to Teams if applicable
  */
 async function processWebhook(source, data, signature) {
+  const results = [];
+  const prLabel = source === 'github' ? 'PR' : 'MR';
+
   // First, check for merge events
   let mergeEvent;
   if (source === 'github') {
@@ -683,17 +727,17 @@ async function processWebhook(source, data, signature) {
   // Handle merge events
   if (mergeEvent) {
     const { prAuthor } = mergeEvent;
+    const prOwner = findPROwner(source, prAuthor);
     
-    // Only notify if it's YOUR MR that was merged
-    if (isOwnPullRequest(source, prAuthor.toString())) {
-      console.log(`Processing ${source} merge event for "${mergeEvent.prTitle}"`);
+    if (prOwner) {
+      console.log(`Processing ${source} merge event for ${prOwner.name}'s "${mergeEvent.prTitle}"`);
       const card = createMergeCard(mergeEvent);
-      const sent = await sendToTeams(card);
-      return { processed: sent, type: 'merge', data: mergeEvent };
+      const sent = await sendToTeams(card, prOwner.teamsWebhookUrl);
+      return { processed: sent, type: 'merge', user: prOwner.name, data: mergeEvent };
     }
     
-    console.log(`Ignoring merge event - not your ${source === 'github' ? 'PR' : 'MR'}`);
-    return { processed: false, reason: 'not your PR/MR merge' };
+    console.log(`Ignoring merge event - ${prLabel} author not in configured users`);
+    return { processed: false, reason: `${prLabel} author not configured` };
   }
 
   // Check for approval/review events
@@ -707,18 +751,18 @@ async function processWebhook(source, data, signature) {
   // Handle approval events
   if (approvalEvent) {
     const { prAuthor, state, reviewedBy } = approvalEvent;
+    const prOwner = findPROwner(source, prAuthor);
     
-    // Only notify if it's YOUR MR that was reviewed
-    if (isOwnPullRequest(source, prAuthor.toString())) {
+    if (prOwner) {
       const stateLabel = state === 'approved' ? 'approval' : 'changes requested';
-      console.log(`Processing ${source} ${stateLabel} from ${reviewedBy} for "${approvalEvent.prTitle}"`);
+      console.log(`Processing ${source} ${stateLabel} from ${reviewedBy} for ${prOwner.name}'s "${approvalEvent.prTitle}"`);
       const card = createApprovalCard(approvalEvent);
-      const sent = await sendToTeams(card);
-      return { processed: sent, type: 'approval', state, data: approvalEvent };
+      const sent = await sendToTeams(card, prOwner.teamsWebhookUrl);
+      return { processed: sent, type: 'approval', state, user: prOwner.name, data: approvalEvent };
     }
     
-    console.log(`Ignoring approval event - not your ${source === 'github' ? 'PR' : 'MR'}`);
-    return { processed: false, reason: 'not your PR/MR approval' };
+    console.log(`Ignoring approval event - ${prLabel} author not in configured users`);
+    return { processed: false, reason: `${prLabel} author not configured` };
   }
 
   // Then, check for comment events
@@ -731,42 +775,57 @@ async function processWebhook(source, data, signature) {
   }
 
   if (!parsed) {
-    console.log(`Ignoring ${source} event - not a recognized PR/MR event`);
-    return { processed: false, reason: 'not a recognized PR/MR event' };
+    console.log(`Ignoring ${source} event - not a recognized ${prLabel} event`);
+    return { processed: false, reason: `not a recognized ${prLabel} event` };
   }
 
   const { prAuthor, commentAuthor, commentBody } = parsed;
 
-  // Don't notify for your own comments (unless ALLOW_SELF_COMMENTS is set for testing)
+  // Find the PR owner
+  const prOwner = findPROwner(source, prAuthor);
+  
+  // Find all mentioned users
+  const mentionedUsers = findMentionedUsers(commentBody, source);
+  
+  // Track who we've notified to avoid duplicates
+  const notifiedUsers = new Set();
+  
+  // Allow self-comments for testing (set ALLOW_SELF_COMMENTS=true)
   const allowSelfComments = process.env.ALLOW_SELF_COMMENTS === 'true';
-  if (!allowSelfComments && isOwnPullRequest(source, commentAuthor.toString())) {
-    console.log('Ignoring self-comment');
-    return { processed: false, reason: 'self-comment' };
-  }
 
-  // Check if it's your PR/MR
-  const isYourPR = isOwnPullRequest(source, prAuthor.toString());
-  
-  // Check if you were mentioned in the comment
-  const mentionedAs = isMentioned(commentBody, source);
-  
-  // Notify if it's your PR OR if you were mentioned
-  if (isYourPR) {
-    console.log(`Processing ${source} comment from ${commentAuthor} on YOUR "${parsed.prTitle}"`);
+  // Notify PR owner (if not commenting on their own PR, unless ALLOW_SELF_COMMENTS is set)
+  if (prOwner && (allowSelfComments || !isCommentAuthor(prOwner, source, commentAuthor))) {
+    console.log(`Processing ${source} comment from ${commentAuthor} on ${prOwner.name}'s "${parsed.prTitle}"`);
     const card = createAdaptiveCard(parsed);
-    const sent = await sendToTeams(card);
-    return { processed: sent, type: 'comment', data: parsed };
-  }
-  
-  if (mentionedAs) {
-    console.log(`Processing ${source} mention from ${commentAuthor} - mentioned as @${mentionedAs}`);
-    const card = createMentionCard(parsed, mentionedAs);
-    const sent = await sendToTeams(card);
-    return { processed: sent, type: 'mention', mentionedAs, data: parsed };
+    const sent = await sendToTeams(card, prOwner.teamsWebhookUrl);
+    results.push({ type: 'comment', user: prOwner.name, sent });
+    notifiedUsers.add(prOwner.name);
   }
 
-  console.log(`Ignoring - not your ${source === 'github' ? 'PR' : 'MR'} and not mentioned`);
-  return { processed: false, reason: 'not your PR/MR and not mentioned' };
+  // Notify mentioned users (if not the comment author and not already notified as PR owner)
+  for (const { user, mentionedAs } of mentionedUsers) {
+    // Skip if this user is the comment author (unless ALLOW_SELF_COMMENTS is set)
+    if (!allowSelfComments && isCommentAuthor(user, source, commentAuthor)) {
+      continue;
+    }
+    // Skip if already notified as PR owner
+    if (notifiedUsers.has(user.name)) {
+      continue;
+    }
+    
+    console.log(`Processing ${source} mention for ${user.name} (@${mentionedAs}) from ${commentAuthor}`);
+    const card = createMentionCard(parsed, mentionedAs);
+    const sent = await sendToTeams(card, user.teamsWebhookUrl);
+    results.push({ type: 'mention', user: user.name, mentionedAs, sent });
+    notifiedUsers.add(user.name);
+  }
+
+  if (results.length === 0) {
+    console.log(`Ignoring - ${prLabel} author and mentioned users not in configured users`);
+    return { processed: false, reason: 'no configured users to notify' };
+  }
+
+  return { processed: true, notifications: results };
 }
 
 // GitHub webhook endpoint
