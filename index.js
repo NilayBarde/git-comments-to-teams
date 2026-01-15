@@ -378,6 +378,11 @@ function createAdaptiveCard(data) {
     ? commentBody.substring(0, 500) + '...' 
     : commentBody;
 
+  // Create dynamic title based on whether it's a code review comment or general comment
+  const title = filePath 
+    ? `💬 Code Review Comment from ${commentAuthor}` 
+    : `💬 ${commentAuthor} commented on your ${prLabel}`;
+
   const card = {
     type: 'message',
     attachments: [
@@ -391,7 +396,7 @@ function createAdaptiveCard(data) {
           body: [
             {
               type: 'TextBlock',
-              text: `New Comment on Your ${prLabel}`,
+              text: title,
               weight: 'Bolder',
               size: 'Medium',
               color: 'Accent'
@@ -470,7 +475,7 @@ function createMentionCard(data, mentionedAs) {
           body: [
             {
               type: 'TextBlock',
-              text: `You Were Mentioned (@${mentionedAs})`,
+              text: `📢 ${commentAuthor} mentioned you (@${mentionedAs})`,
               weight: 'Bolder',
               size: 'Medium',
               color: 'Attention'
@@ -532,7 +537,7 @@ function createMergeCard(data) {
           body: [
             {
               type: 'TextBlock',
-              text: `Your ${prLabel} Was Merged! 🎉`,
+              text: `🎉 ${mergedBy} merged your ${prLabel}`,
               weight: 'Bolder',
               size: 'Medium',
               color: 'Good'
@@ -572,8 +577,8 @@ function createApprovalCard(data) {
   
   const isApproved = state === 'approved';
   const title = isApproved 
-    ? `Your ${prLabel} Was Approved! ✅` 
-    : `Changes Requested on Your ${prLabel} ⚠️`;
+    ? `✅ ${reviewedBy} approved your ${prLabel}` 
+    : `⚠️ ${reviewedBy} requested changes on your ${prLabel}`;
   const color = isApproved ? 'Good' : 'Warning';
 
   const card = {
