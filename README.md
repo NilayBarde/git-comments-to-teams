@@ -120,7 +120,7 @@ curl "https://gitlab.com/api/v4/users?username=YOUR_USERNAME"
 2. Configure:
    - **URL**: `https://your-app.onrender.com/webhook/gitlab`
    - **Secret token**: (optional) create a token and set `GITLAB_WEBHOOK_TOKEN`
-   - **Trigger**: 
+   - **Trigger**:
      - ✅ **Comments** (for comment and @mention notifications)
      - ✅ **Merge request events** (for merge notifications)
    - **Enable SSL verification**: Yes
