@@ -3,13 +3,30 @@ const crypto = require('crypto');
 const fetch = require('node-fetch');
 const _ = require('lodash');
 
-// Load configuration
-let config;
-try {
-  config = require('./config.json');
-} catch (error) {
-  console.error('Error: config.json not found. Copy config.example.json to config.json and fill in your values.');
-  process.exit(1);
+// Load configuration from environment variables (Railway/production) or config.json (local dev)
+let config = {
+  port: process.env.PORT || 3000,
+  teamsWebhookUrl: process.env.TEAMS_WEBHOOK_URL,
+  github: {
+    username: process.env.GITHUB_USERNAME,
+    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET
+  },
+  gitlab: {
+    username: process.env.GITLAB_USERNAME,
+    userId: process.env.GITLAB_USER_ID ? parseInt(process.env.GITLAB_USER_ID, 10) : undefined,
+    webhookToken: process.env.GITLAB_WEBHOOK_TOKEN
+  }
+};
+
+// Fallback to config.json for local development if env vars not set
+if (!config.teamsWebhookUrl) {
+  try {
+    const fileConfig = require('./config.json');
+    config = _.merge(config, fileConfig);
+  } catch (error) {
+    console.error('Error: Set environment variables or create config.json from config.example.json');
+    process.exit(1);
+  }
 }
 
 const app = express();
