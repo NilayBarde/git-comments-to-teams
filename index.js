@@ -1,10 +1,12 @@
+require('dotenv').config(); // Load .env file for local development
+
 const express = require('express');
 const crypto = require('crypto');
 const fetch = require('node-fetch');
 const _ = require('lodash');
 
-// Load configuration from environment variables (Render/production) or config.json (local dev)
-let config = {
+// Load configuration from environment variables
+const config = {
   port: process.env.PORT || 3000,
   teamsWebhookUrl: process.env.TEAMS_WEBHOOK_URL,
   github: {
@@ -18,7 +20,7 @@ let config = {
   }
 };
 
-// Log config for debugging (remove in production)
+// Log config for debugging
 console.log('Config loaded:', {
   teamsWebhookUrl: config.teamsWebhookUrl ? 'SET' : 'NOT SET',
   gitlabUsername: config.gitlab.username,
@@ -26,16 +28,12 @@ console.log('Config loaded:', {
   githubUsername: config.github.username
 });
 
-// Fallback to config.json for local development if env vars not set
+// Validate required config
 if (!config.teamsWebhookUrl) {
-  try {
-    const fileConfig = require('./config.json');
-    config = _.merge(config, fileConfig);
-    console.log('Loaded config from config.json (fallback)');
-  } catch (error) {
-    console.error('Error: Set environment variables or create config.json from config.example.json');
-    process.exit(1);
-  }
+  console.error('Error: TEAMS_WEBHOOK_URL environment variable is required');
+  console.error('For local dev: create a .env file (copy from .env.example)');
+  console.error('For production: set environment variables in your hosting platform');
+  process.exit(1);
 }
 
 const app = express();
