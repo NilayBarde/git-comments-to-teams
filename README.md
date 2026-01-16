@@ -75,12 +75,14 @@ Want to receive notifications? Follow these steps and send the info to the admin
 
 ### Step 1: Create Your Teams Webhook
 
+> **💡 Tip:** Create your own personal Team and Channel for these notifications! This keeps your PR alerts separate from work channels and gives you full control. Just click "Join or create a team" → "Create team" → "From scratch" → "Private", then add a channel for notifications.
+
 1. Open **Microsoft Teams**
 2. Click **Apps** (left sidebar) → Search **Workflows**
 3. Click **Create** tab
 4. Search for "**Send webhook alerts to a channel**" template
 5. Click it and follow the setup:
-   - Select your Team and Channel (or create a private channel just for yourself)
+   - Select your Team and Channel (use the personal one you created above!)
    - Give it a name (e.g., "My PR Notifications")
 6. After saving, copy the **HTTP POST URL** - this is your webhook URL
 
