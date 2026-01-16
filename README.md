@@ -69,6 +69,74 @@ Configure webhooks in your GitLab/GitHub repos to point to your Render URL (see 
 
 ---
 
+## 🆕 New User? Start Here
+
+Want to receive notifications? Follow these steps and send the info to the admin.
+
+### Step 1: Create Your Teams Webhook
+
+1. Open **Microsoft Teams**
+2. Click **Apps** (left sidebar) → Search **Workflows**
+3. Click **Create** tab
+4. Search for "**Send webhook alerts to a channel**" template
+5. Click it and follow the setup:
+   - Select your Team and Channel (or create a private channel just for yourself)
+   - Give it a name (e.g., "My PR Notifications")
+6. After saving, copy the **HTTP POST URL** - this is your webhook URL
+
+### Step 2: Find Your Usernames & IDs
+
+**GitHub Username:**
+
+- Go to GitHub and look at your profile URL: `github.com/YOUR_USERNAME`
+
+**GitLab Username:**
+
+- Go to GitLab and look at your profile URL: `gitlab.com/YOUR_USERNAME`
+
+**GitLab User ID (required for GitLab notifications):**
+
+1. Log in to GitLab
+2. Open browser Developer Tools (Cmd+Option+I or F12)
+3. Go to **Console** tab
+4. Type: `gon.current_user_id` and press Enter
+5. That number is your User ID
+
+### Step 3: Decide on Mention Aliases (Optional)
+
+If you want to get notified when someone @mentions a team you're on, list those aliases.
+For example, if people mention `@espn-core-web` and you want those notifications, include `"espn-core-web"`.
+
+### Step 4: Send Your Info to the Admin
+
+Copy this template and fill it out:
+
+```
+Name: [Your first name]
+Teams Webhook URL: [paste your URL from Step 1]
+
+GitHub Username: [your GitHub username, or leave blank if not using GitHub]
+
+GitLab Username: [your GitLab username]
+GitLab User ID: [the number from Step 2]
+
+Mention Aliases (optional): [comma-separated list, e.g., "espn-core-web, bet-squad"]
+```
+
+The admin will create a config object like this and add you to the system:
+
+```json
+{
+  "name": "yourname",
+  "teamsWebhookUrl": "https://your-webhook-url",
+  "github": { "username": "YourGitHubUsername" },
+  "gitlab": { "username": "your.gitlab.username", "userId": 12345 },
+  "mentionAliases": ["espn-core-web", "your-team"]
+}
+```
+
+---
+
 ## Detailed Setup Instructions
 
 ### Setting Up Teams Webhook (Workflows)
