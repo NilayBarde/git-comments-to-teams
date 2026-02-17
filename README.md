@@ -9,6 +9,7 @@ A self-hosted webhook server that receives GitHub PR and GitLab MR events and po
 - **@Mentions** - Get notified when someone mentions you or your team (e.g., `@bet-squad-web`)
 - **MR/PR Merged** - Get notified when your merge request is merged
 - **Approvals & Changes Requested** - Get notified on PR reviews
+- **Pipeline Failures & Successes** - Get notified when a pipeline fails or passes on your GitLab MR
 - **Filters out self-comments** - No notifications for your own comments
 - **Rich Adaptive Cards** - Beautiful formatting in Teams
 - **GitHub + GitLab support** - Including enterprise instances
@@ -66,6 +67,8 @@ Configure webhooks in your GitLab/GitHub repos to point to your Render URL (see 
 | **Approved** | YOUR MR/PR is approved by a reviewer ✅ |
 | **Changes Requested** | A reviewer requests changes on YOUR MR/PR ⚠️ |
 | **Merged** | YOUR MR/PR gets merged 🎉 |
+| **Pipeline Failed** | A pipeline fails on YOUR GitLab MR 🔴 |
+| **Pipeline Passed** | A pipeline succeeds on YOUR GitLab MR 🟢 |
 
 ---
 
@@ -184,7 +187,8 @@ curl "https://gitlab.com/api/v4/users?username=YOUR_USERNAME"
    - **Secret token**: (optional) create a token and set `GITLAB_WEBHOOK_TOKEN`
    - **Trigger**:
      - ✅ **Comments** (for comment and @mention notifications)
-     - ✅ **Merge request events** (for merge notifications)
+     - ✅ **Merge request events** (for merge and approval notifications)
+     - ✅ **Pipeline events** (for pipeline failure notifications)
    - **Enable SSL verification**: Yes
 3. Click **Add webhook**
 4. Click **Test** → **Note events** to verify

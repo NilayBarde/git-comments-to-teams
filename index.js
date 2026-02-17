@@ -73,6 +73,9 @@ const PR_CLOSED_ACTION = 'closed';
 const PR_REVIEW_SUBMITTED_ACTION = 'submitted';
 const PR_REVIEW_APPROVED_STATE = 'approved';
 const PR_REVIEW_CHANGES_REQUESTED_STATE = 'changes_requested';
+const PIPELINE_OBJECT_KIND = 'pipeline';
+const PIPELINE_FAILED_STATUS = 'failed';
+const PIPELINE_SUCCESS_STATUS = 'success';
 
 // Parse JSON body
 app.use(express.json());
@@ -260,6 +263,52 @@ function parseGitLabApprovalEvent(body) {
     reviewedBy: approvedBy,
     repoName
   };
+}
+
+/**
+ * Parse GitLab pipeline event webhook payload
+ */
+function parseGitLabPipelineEvent(body) {
+  const objectKind = _.get(body, 'object_kind');
+  if (objectKind !== PIPELINE_OBJECT_KIND) return;
+
+  const status = _.get(body, 'object_attributes.status');
+  const isFailed = status === PIPELINE_FAILED_STATUS;
+  const isSuccess = status === PIPELINE_SUCCESS_STATUS;
+  if (!isFailed && !isSuccess) return;
+
+  // Only notify for pipelines associated with a merge request
+  const mergeRequest = _.get(body, 'merge_request');
+  if (!mergeRequest) return;
+
+  const prAuthor = _.get(mergeRequest, 'author_id');
+  const prTitle = _.get(mergeRequest, 'title', '');
+  const prUrl = _.get(mergeRequest, 'url', '');
+  const branch = _.get(body, 'object_attributes.ref', '');
+  const pipelineId = _.get(body, 'object_attributes.id');
+  const pipelineUrl = `${_.get(body, 'project.web_url', '')}/pipelines/${pipelineId}`;
+  const repoName = _.get(body, 'project.path_with_namespace', '');
+
+  const result = {
+    type: isFailed ? 'pipeline_failed' : 'pipeline_success',
+    source: 'gitlab',
+    prAuthor,
+    prTitle,
+    prUrl,
+    branch,
+    pipelineUrl,
+    repoName
+  };
+
+  // Collect failed stages/jobs for context when pipeline failed
+  if (isFailed) {
+    const builds = _.get(body, 'builds', []);
+    result.failedJobs = builds
+      .filter(build => _.get(build, 'status') === PIPELINE_FAILED_STATUS)
+      .map(build => `${_.get(build, 'stage', '')}:${_.get(build, 'name', '')}`);
+  }
+
+  return result;
 }
 
 /**
@@ -678,6 +727,120 @@ function createApprovalCard(data) {
 }
 
 /**
+ * Create Teams Adaptive Card for pipeline failure notifications
+ */
+function createPipelineFailureCard(data) {
+  const { prTitle, prUrl, branch, pipelineUrl, repoName, failedJobs } = data;
+
+  const facts = [
+    { title: 'Source:', value: 'GitLab' },
+    { title: 'Repository:', value: repoName },
+    { title: 'MR:', value: prTitle },
+    { title: 'Branch:', value: branch }
+  ];
+
+  if (failedJobs.length > 0) {
+    facts.push({ title: 'Failed jobs:', value: failedJobs.join(', ') });
+  }
+
+  const card = {
+    type: 'message',
+    attachments: [
+      {
+        contentType: 'application/vnd.microsoft.card.adaptive',
+        contentUrl: null,
+        content: {
+          type: 'AdaptiveCard',
+          $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+          version: '1.4',
+          body: [
+            {
+              type: 'TextBlock',
+              text: '🔴 Pipeline Failed on your MR',
+              weight: 'Bolder',
+              size: 'Medium',
+              color: 'Attention'
+            },
+            {
+              type: 'FactSet',
+              facts
+            }
+          ],
+          actions: [
+            {
+              type: 'Action.OpenUrl',
+              title: 'View Pipeline',
+              url: pipelineUrl
+            },
+            {
+              type: 'Action.OpenUrl',
+              title: 'View MR',
+              url: prUrl
+            }
+          ]
+        }
+      }
+    ]
+  };
+
+  return card;
+}
+
+/**
+ * Create Teams Adaptive Card for pipeline success notifications
+ */
+function createPipelineSuccessCard(data) {
+  const { prTitle, prUrl, branch, pipelineUrl, repoName } = data;
+
+  const card = {
+    type: 'message',
+    attachments: [
+      {
+        contentType: 'application/vnd.microsoft.card.adaptive',
+        contentUrl: null,
+        content: {
+          type: 'AdaptiveCard',
+          $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+          version: '1.4',
+          body: [
+            {
+              type: 'TextBlock',
+              text: '🟢 Pipeline Passed on your MR',
+              weight: 'Bolder',
+              size: 'Medium',
+              color: 'Good'
+            },
+            {
+              type: 'FactSet',
+              facts: [
+                { title: 'Source:', value: 'GitLab' },
+                { title: 'Repository:', value: repoName },
+                { title: 'MR:', value: prTitle },
+                { title: 'Branch:', value: branch }
+              ]
+            }
+          ],
+          actions: [
+            {
+              type: 'Action.OpenUrl',
+              title: 'View Pipeline',
+              url: pipelineUrl
+            },
+            {
+              type: 'Action.OpenUrl',
+              title: 'View MR',
+              url: prUrl
+            }
+          ]
+        }
+      }
+    ]
+  };
+
+  return card;
+}
+
+/**
  * Send notification to Teams
  * @param {Object} card - The Adaptive Card to send
  * @param {string} webhookUrl - The Teams webhook URL to send to
@@ -763,6 +926,28 @@ async function processWebhook(source, data, signature) {
     
     console.log(`Ignoring approval event - ${prLabel} author not in configured users`);
     return { processed: false, reason: `${prLabel} author not configured` };
+  }
+
+  // Check for pipeline events (GitLab only)
+  if (source === 'gitlab') {
+    const pipelineEvent = parseGitLabPipelineEvent(data);
+
+    if (pipelineEvent) {
+      const { prAuthor, type: pipelineType } = pipelineEvent;
+      const prOwner = findPROwner(source, prAuthor);
+
+      if (prOwner) {
+        const isFailed = pipelineType === 'pipeline_failed';
+        const statusLabel = isFailed ? 'failure' : 'success';
+        console.log(`Processing ${source} pipeline ${statusLabel} for ${prOwner.name}'s "${pipelineEvent.prTitle}"`);
+        const card = isFailed ? createPipelineFailureCard(pipelineEvent) : createPipelineSuccessCard(pipelineEvent);
+        const sent = await sendToTeams(card, prOwner.teamsWebhookUrl);
+        return { processed: sent, type: pipelineType, user: prOwner.name, data: pipelineEvent };
+      }
+
+      console.log('Ignoring pipeline event - MR author not in configured users');
+      return { processed: false, reason: 'MR author not configured' };
+    }
   }
 
   // Then, check for comment events
