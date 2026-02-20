@@ -77,6 +77,13 @@ const PIPELINE_OBJECT_KIND = 'pipeline';
 const PIPELINE_FAILED_STATUS = 'failed';
 const PIPELINE_SUCCESS_STATUS = 'success';
 
+// Patterns for bot usernames to ignore (GitLab project/group bots, GitHub app bots)
+const BOT_USERNAME_PATTERNS = [
+  /^project_\d+_bot_/i,
+  /^group_\d+_bot_/i,
+  /\[bot\]$/i
+];
+
 // Parse JSON body
 app.use(express.json());
 
@@ -136,6 +143,14 @@ function isCommentAuthor(user, source, commentAuthor) {
     return commentAuthorLower === gitlabUsername;
   }
   return false;
+}
+
+/**
+ * Check if a username belongs to a bot account
+ */
+function isBotUser(username) {
+  if (!username) return false;
+  return BOT_USERNAME_PATTERNS.some(pattern => pattern.test(username));
 }
 
 /**
@@ -273,13 +288,23 @@ function parseGitLabPipelineEvent(body) {
   if (objectKind !== PIPELINE_OBJECT_KIND) return;
 
   const status = _.get(body, 'object_attributes.status');
+  const pipelineSource = _.get(body, 'object_attributes.source', 'unknown');
+  const ref = _.get(body, 'object_attributes.ref', '');
+  console.log(`Pipeline event: status=${status}, source=${pipelineSource}, ref=${ref}`);
+
   const isFailed = status === PIPELINE_FAILED_STATUS;
   const isSuccess = status === PIPELINE_SUCCESS_STATUS;
-  if (!isFailed && !isSuccess) return;
+  if (!isFailed && !isSuccess) {
+    console.log(`Ignoring pipeline with status: ${status}`);
+    return;
+  }
 
   // Only notify for pipelines associated with a merge request
   const mergeRequest = _.get(body, 'merge_request');
-  if (!mergeRequest) return;
+  if (!mergeRequest) {
+    console.log(`Ignoring pipeline - no merge_request in payload (source: ${pipelineSource}, ref: ${ref}). Pipeline events must come from MR pipelines.`);
+    return;
+  }
 
   const prAuthor = _.get(mergeRequest, 'author_id');
   const prTitle = _.get(mergeRequest, 'title', '');
@@ -428,6 +453,13 @@ function parseGitLabPayload(body) {
 
   const noteableType = _.get(body, 'object_attributes.noteable_type');
   if (noteableType !== MERGE_REQUEST_TYPE) return;
+
+  // Only notify on new comments, not edits/updates (e.g. bots updating their comment on each push)
+  const noteAction = _.get(body, 'object_attributes.action');
+  if (noteAction && noteAction !== 'create') {
+    console.log(`Ignoring note event with action: ${noteAction}`);
+    return;
+  }
 
   const mergeRequest = _.get(body, 'merge_request');
   if (!mergeRequest) return;
@@ -966,6 +998,12 @@ async function processWebhook(source, data, signature) {
 
   const { prAuthor, commentAuthor, commentBody } = parsed;
 
+  // Filter out bot comments
+  if (isBotUser(commentAuthor)) {
+    console.log(`Ignoring comment from bot user: ${commentAuthor}`);
+    return { processed: false, reason: 'comment from bot user' };
+  }
+
   // Find the PR owner
   const prOwner = findPROwner(source, prAuthor);
   
@@ -1030,7 +1068,8 @@ app.post('/webhook/github', async (req, res) => {
 
 // GitLab webhook endpoint
 app.post('/webhook/gitlab', async (req, res) => {
-  console.log('Received GitLab webhook');
+  const objectKind = _.get(req.body, 'object_kind', 'unknown');
+  console.log(`Received GitLab webhook: object_kind=${objectKind}`);
 
   const token = req.headers[GITLAB_TOKEN_HEADER];
   
