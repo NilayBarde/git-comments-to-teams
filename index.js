@@ -81,7 +81,8 @@ const PIPELINE_SUCCESS_STATUS = 'success';
 const BOT_USERNAME_PATTERNS = [
   /^project_\d+_bot_/i,
   /^group_\d+_bot_/i,
-  /\[bot\]$/i
+  /\[bot\]$/i,
+  /^DTCI\.DL-Technology\.PE\.Infra\.CD$/i
 ];
 
 // Parse JSON body
