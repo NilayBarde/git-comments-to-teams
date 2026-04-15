@@ -926,6 +926,11 @@ async function processWebhook(source, data, signature) {
     const prOwner = findPROwner(source, prAuthor);
     
     if (prOwner) {
+      const { mergedBy } = mergeEvent;
+      if (isCommentAuthor(prOwner, source, mergedBy)) {
+        console.log(`Ignoring self-merge by ${mergedBy} on their own ${prLabel}`);
+        return { processed: false, reason: 'self-merge' };
+      }
       console.log(`Processing ${source} merge event for ${prOwner.name}'s "${mergeEvent.prTitle}"`);
       const card = createMergeCard(mergeEvent);
       const sent = await sendToTeams(card, prOwner.teamsWebhookUrl);
