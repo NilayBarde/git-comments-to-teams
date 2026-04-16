@@ -28,5 +28,19 @@
       "username": "Muskan.Vyas",
       "userId": 33362
     }
+  },
+  {
+    "name": "grace.m.mallett",
+    "teamsWebhookUrl": "https://default56b731a8a2ac4c32bf6b616810e913.c6.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/24ddf99e96dd46268c9bf3312e787e8d/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=up_dqccdryUFn4gJdTMCetbiBB3Jc-n6SqNKt4sdnbQ",
+    "gitlab": {
+      "username": "Grace.M.Mallett",
+      "userId": 5364
+    },
+    "github": {
+      "username": "Grace-M-Mallett"
+    },
+    "mentionAliases": [
+      "gamecast-redesign-web"
+    ]
   }
 ]
