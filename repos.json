@@ -1,5 +1,6 @@
 [
-  "gitlab:dtci/webdev/espn/fitt",
+  "github:webdev/score",
+  "gitlab:dtci-infraeng/perf-ops/cloud-perf/orch-tools/cloud-mgmt/espn-cse/services/editions-proxy",
   "gitlab:dtci/webdev/espn/core",
-  "gitlab:dtci-infraeng/perf-ops/cloud-perf/orch-tools/cloud-mgmt/espn-cse/services/editions-proxy"
+  "gitlab:dtci/webdev/espn/fitt"
 ]
