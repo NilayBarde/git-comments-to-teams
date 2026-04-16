@@ -1195,7 +1195,7 @@ function getRegistrationPage() {
 
     <div class="field">
       <label for="mentionAliases">Mention Aliases <span class="optional-tag">optional, comma-separated</span></label>
-      <div class="hint">Team aliases you want to be notified for, e.g. @espn-core-web</div>
+      <div class="hint">Team aliases you want to be notified for (without the @), e.g. espn-core-web</div>
       <input type="text" id="mentionAliases" name="mentionAliases" placeholder="e.g. espn-core-web, bet-squad">
     </div>
 
@@ -1392,7 +1392,7 @@ function getEditPage() {
 
     <div class="field">
       <label for="mentionAliases">Mention Aliases <span class="optional-tag">optional, comma-separated</span></label>
-      <div class="hint">Team aliases you want to be notified for, e.g. @espn-core-web</div>
+      <div class="hint">Team aliases you want to be notified for (without the @), e.g. espn-core-web</div>
       <input type="text" id="mentionAliases" placeholder="e.g. espn-core-web, bet-squad">
     </div>
 
