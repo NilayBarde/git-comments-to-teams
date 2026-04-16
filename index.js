@@ -1299,9 +1299,9 @@ function getUnregisterPage() {
   <p class="subtitle">Remove yourself from PR Comment Notifier. You'll stop receiving Teams notifications.</p>
   <form id="unregForm" class="card">
     <div class="field">
-      <label for="name">Your Name</label>
-      <div class="hint">The name you registered with (e.g. nilay, ryan)</div>
-      <input type="text" id="name" name="name" placeholder="e.g. nilay" required>
+      <label for="gitlabUsername">Your GitLab Username</label>
+      <div class="hint">The GitLab username you registered with (e.g. Nilay.Barde)</div>
+      <input type="text" id="gitlabUsername" name="gitlabUsername" placeholder="e.g. Nilay.Barde" required>
     </div>
     <button type="submit" id="submitBtn">Unsubscribe</button>
     <div id="msg"></div>
@@ -1320,7 +1320,7 @@ document.getElementById('unregForm').addEventListener('submit', async (e) => {
     const res = await fetch('/unregister', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: document.getElementById('name').value.trim() })
+      body: JSON.stringify({ gitlabUsername: document.getElementById('gitlabUsername').value.trim() })
     });
     const data = await res.json();
     if (res.ok) {
@@ -1436,29 +1436,30 @@ app.get('/unregister', (req, res) => {
 
 app.post('/unregister', async (req, res) => {
   try {
-    const { name } = req.body;
-    if (!name) {
-      return res.status(400).json({ error: 'Name is required' });
+    const { gitlabUsername } = req.body;
+    if (!gitlabUsername) {
+      return res.status(400).json({ error: 'GitLab username is required' });
     }
 
-    const nameLower = name.toLowerCase().trim();
-    const userIndex = users.findIndex(u => u.name.toLowerCase() === nameLower);
+    const usernameLower = gitlabUsername.toLowerCase().trim();
+    const userIndex = users.findIndex(u => _.get(u, 'gitlab.username', '').toLowerCase() === usernameLower);
     if (userIndex === -1) {
-      return res.status(404).json({ error: `User "${name}" not found` });
+      return res.status(404).json({ error: `No user found with GitLab username "${gitlabUsername}"` });
     }
 
+    const removedUser = users[userIndex];
     const updatedUsers = users.filter((_, i) => i !== userIndex);
 
     try {
-      await commitUsersToGitHub(updatedUsers, `unregister: remove ${nameLower}`);
+      await commitUsersToGitHub(updatedUsers, `unregister: remove ${removedUser.name}`);
     } catch (err) {
       console.error('Failed to commit users.json to GitHub:', err.message);
       return res.status(500).json({ error: 'Failed to save changes. Ask an admin to check the server logs.' });
     }
 
     users.splice(userIndex, 1);
-    console.log(`User unregistered: ${nameLower}`);
-    res.json({ message: `${name} has been removed. You'll stop receiving notifications shortly.` });
+    console.log(`User unregistered: ${removedUser.name} (${gitlabUsername})`);
+    res.json({ message: `${removedUser.name} has been removed. You'll stop receiving notifications shortly.` });
   } catch (err) {
     console.error('Unregister error:', err);
     res.status(500).json({ error: 'Something went wrong. Please try again.' });
