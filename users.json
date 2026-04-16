@@ -58,5 +58,16 @@
       "username": "gus.argueta",
       "userId": 21715
     }
+  },
+  {
+    "name": "david.murley",
+    "teamsWebhookUrl": "https://default56b731a8a2ac4c32bf6b616810e913.c6.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/6da0f3c948724fd5b18fef9f84ec3330/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=OXM3tLHKbJzKdWCgt86cQGZYGNyrPfHFjxYaRcc7M3Q",
+    "gitlab": {
+      "username": "David.Murley",
+      "userId": 18454
+    },
+    "github": {
+      "username": "david-murley"
+    }
   }
 ]
