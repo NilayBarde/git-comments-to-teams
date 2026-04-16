@@ -1169,6 +1169,7 @@ function getRegistrationPage() {
 <div class="container">
   <h1>PR Comment Notifier</h1>
   <p class="subtitle">Sign up to get Teams notifications for comments, reviews, merges, and pipeline events on your MRs/PRs.</p>
+  <div style="font-size:.85rem;margin-bottom:1rem"><a href="/edit" style="color:#4f6ef7;text-decoration:none">Edit settings</a> · <a href="/unregister" style="color:#4f6ef7;text-decoration:none">Unregister</a></div>
 
   <div class="card">
     <details>
@@ -1291,6 +1292,7 @@ function getUnregisterPage() {
 <div class="container">
   <h1>Unsubscribe</h1>
   <p class="subtitle">Remove yourself from PR Comment Notifier. You'll stop receiving Teams notifications.</p>
+  <div style="font-size:.85rem;margin-bottom:1rem"><a href="/register" style="color:#4f6ef7;text-decoration:none">Register</a> · <a href="/edit" style="color:#4f6ef7;text-decoration:none">Edit settings</a></div>
   <form id="unregForm" class="card">
     <div class="field">
       <label for="gitlabUsername">Your GitLab Username</label>
@@ -1329,6 +1331,150 @@ document.getElementById('unregForm').addEventListener('submit', async (e) => {
     msg.textContent = err.message;
     btn.disabled = false;
     btn.textContent = 'Unsubscribe';
+  }
+});
+</script>
+</body>
+</html>`;
+}
+
+function getEditPage() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PR Comment Notifier — Edit Settings</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f6f8; color: #1a1a2e; min-height: 100vh; display: flex; justify-content: center; padding: 2rem 1rem; }
+  .container { max-width: 540px; width: 100%; }
+  h1 { font-size: 1.5rem; margin-bottom: .25rem; }
+  .subtitle { color: #555; margin-bottom: 1.5rem; font-size: .95rem; }
+  .card { background: #fff; border-radius: 12px; padding: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 1.25rem; }
+  label { display: block; font-weight: 600; font-size: .85rem; margin-bottom: .35rem; color: #333; }
+  .hint { font-size: .8rem; color: #777; margin-bottom: .5rem; }
+  input[type="text"], input[type="url"] { width: 100%; padding: .6rem .75rem; border: 1px solid #d0d0d0; border-radius: 8px; font-size: .9rem; transition: border-color .15s; }
+  input:focus { outline: none; border-color: #4f6ef7; box-shadow: 0 0 0 3px rgba(79,110,247,.12); }
+  input:read-only { background: #f5f5f5; color: #888; }
+  .field { margin-bottom: 1rem; }
+  button { width: 100%; padding: .7rem; background: #4f6ef7; color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: background .15s; }
+  button:hover { background: #3b5de7; }
+  button:disabled { background: #a0b0f0; cursor: not-allowed; }
+  .msg { margin-top: 1rem; padding: .75rem 1rem; border-radius: 8px; font-size: .9rem; line-height: 1.5; }
+  .msg.success { background: #e6f9ed; color: #1a7a3a; }
+  .msg.error { background: #fde8e8; color: #b91c1c; }
+  .optional-tag { font-weight: 400; color: #999; font-size: .8rem; }
+  .hidden { display: none; }
+  .nav { font-size: .85rem; margin-bottom: 1rem; }
+  .nav a { color: #4f6ef7; text-decoration: none; }
+  .nav a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Edit Settings</h1>
+  <p class="subtitle">Update your PR Comment Notifier configuration.</p>
+  <div class="nav"><a href="/register">Register</a> · <a href="/unregister">Unregister</a></div>
+
+  <div id="lookupCard" class="card">
+    <div class="field">
+      <label for="lookupUsername">Your GitLab Username</label>
+      <input type="text" id="lookupUsername" placeholder="e.g. Nilay.Barde" required>
+    </div>
+    <button id="lookupBtn" onclick="lookupUser()">Look Up</button>
+    <div id="lookupMsg"></div>
+  </div>
+
+  <form id="editForm" class="card hidden">
+    <div class="field">
+      <label>GitLab Username</label>
+      <input type="text" id="gitlabUsername" readonly>
+    </div>
+
+    <div class="field">
+      <label for="teamsWebhookUrl">Teams Webhook URL</label>
+      <input type="url" id="teamsWebhookUrl" required>
+    </div>
+
+    <div class="field">
+      <label for="githubUsername">GitHub Username <span class="optional-tag">optional</span></label>
+      <input type="text" id="githubUsername" placeholder="e.g. NilayBarde">
+    </div>
+
+    <div class="field">
+      <label for="mentionAliases">Mention Aliases <span class="optional-tag">optional, comma-separated</span></label>
+      <div class="hint">Team aliases you want to be notified for, e.g. @espn-core-web</div>
+      <input type="text" id="mentionAliases" placeholder="e.g. espn-core-web, bet-squad">
+    </div>
+
+    <button type="submit" id="saveBtn">Save Changes</button>
+    <div id="editMsg"></div>
+  </form>
+</div>
+
+<script>
+async function lookupUser() {
+  const btn = document.getElementById('lookupBtn');
+  const msg = document.getElementById('lookupMsg');
+  const username = document.getElementById('lookupUsername').value.trim();
+  if (!username) return;
+  btn.disabled = true;
+  btn.textContent = 'Looking up…';
+  msg.className = 'msg';
+  msg.textContent = '';
+  try {
+    const res = await fetch('/api/user/' + encodeURIComponent(username));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'User not found');
+    document.getElementById('gitlabUsername').value = data.gitlab?.username || '';
+    document.getElementById('teamsWebhookUrl').value = data.teamsWebhookUrl || '';
+    document.getElementById('githubUsername').value = data.github?.username || '';
+    document.getElementById('mentionAliases').value = (data.mentionAliases || []).join(', ');
+    document.getElementById('lookupCard').classList.add('hidden');
+    document.getElementById('editForm').classList.remove('hidden');
+  } catch (err) {
+    msg.className = 'msg error';
+    msg.textContent = err.message;
+    btn.disabled = false;
+    btn.textContent = 'Look Up';
+  }
+}
+
+document.getElementById('editForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('saveBtn');
+  const msg = document.getElementById('editMsg');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  msg.className = 'msg';
+  msg.textContent = '';
+  const aliases = document.getElementById('mentionAliases').value
+    .split(',').map(s => s.trim()).filter(Boolean);
+  try {
+    const res = await fetch('/edit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        gitlabUsername: document.getElementById('gitlabUsername').value.trim(),
+        teamsWebhookUrl: document.getElementById('teamsWebhookUrl').value.trim(),
+        githubUsername: document.getElementById('githubUsername').value.trim(),
+        mentionAliases: aliases
+      })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      msg.className = 'msg success';
+      msg.textContent = data.message;
+      btn.textContent = 'Saved!';
+    } else {
+      throw new Error(data.error || 'Save failed');
+    }
+  } catch (err) {
+    msg.className = 'msg error';
+    msg.textContent = err.message;
+    btn.disabled = false;
+    btn.textContent = 'Save Changes';
   }
 });
 </script>
@@ -1465,6 +1611,73 @@ app.post('/unregister', async (req, res) => {
     res.json({ message: `${removedUser.name} has been removed. You'll stop receiving notifications shortly.` });
   } catch (err) {
     console.error('Unregister error:', err);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
+
+app.get('/edit', (req, res) => {
+  res.send(getEditPage());
+});
+
+app.get('/api/user/:gitlabUsername', (req, res) => {
+  const usernameLower = req.params.gitlabUsername.toLowerCase().trim();
+  const user = users.find(u => _.get(u, 'gitlab.username', '').toLowerCase() === usernameLower);
+  if (!user) {
+    return res.status(404).json({ error: `No user found with GitLab username "${req.params.gitlabUsername}"` });
+  }
+  res.json({
+    teamsWebhookUrl: user.teamsWebhookUrl,
+    github: user.github,
+    gitlab: user.gitlab,
+    mentionAliases: user.mentionAliases || []
+  });
+});
+
+app.post('/edit', async (req, res) => {
+  try {
+    const { gitlabUsername, teamsWebhookUrl, githubUsername, mentionAliases } = req.body;
+
+    if (!gitlabUsername) {
+      return res.status(400).json({ error: 'GitLab username is required' });
+    }
+    if (!teamsWebhookUrl) {
+      return res.status(400).json({ error: 'Teams Webhook URL is required' });
+    }
+
+    const usernameLower = gitlabUsername.toLowerCase().trim();
+    const userIndex = users.findIndex(u => _.get(u, 'gitlab.username', '').toLowerCase() === usernameLower);
+    if (userIndex === -1) {
+      return res.status(404).json({ error: `No user found with GitLab username "${gitlabUsername}"` });
+    }
+
+    const updatedUser = { ...users[userIndex], teamsWebhookUrl };
+
+    if (githubUsername) {
+      updatedUser.github = { username: githubUsername };
+    } else {
+      delete updatedUser.github;
+    }
+
+    if (mentionAliases && mentionAliases.length > 0) {
+      updatedUser.mentionAliases = mentionAliases;
+    } else {
+      delete updatedUser.mentionAliases;
+    }
+
+    users[userIndex] = updatedUser;
+    const updatedUsers = [...users];
+
+    try {
+      await commitUsersToGitHub(updatedUsers, `edit: update ${updatedUser.name}`);
+    } catch (err) {
+      console.error('Failed to commit users.json to GitHub:', err.message);
+      return res.status(500).json({ error: 'Updated locally but failed to save permanently. Ask an admin to check the server logs.' });
+    }
+
+    console.log(`User updated: ${updatedUser.name}`);
+    res.json({ message: 'Settings saved! Changes take effect within about a minute.' });
+  } catch (err) {
+    console.error('Edit error:', err);
     res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 });
