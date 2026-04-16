@@ -1162,7 +1162,7 @@ function getRegistrationPage() {
         <li>Click the <strong>Create</strong> tab</li>
         <li>Search for "<strong>Send webhook alerts to a channel</strong>" and select it</li>
         <li>Choose your Team and Channel, give it a name (e.g. "PR Notifications")</li>
-        <li>After saving, copy the <strong>HTTP POST URL</strong> — that's your webhook URL</li>
+        <li>After saving, click <strong>Copy webhook link</strong> — that's your webhook URL</li>
       </ol>
     </details>
   </div>
