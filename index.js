@@ -56,11 +56,17 @@ users.forEach((user, index) => {
   }
 });
 
-// Parse configured repos and track discovered ones
-const configuredRepos = process.env.WATCHED_REPOS
-  ? process.env.WATCHED_REPOS.split(',').map(r => r.trim()).filter(Boolean)
-  : [];
-const discoveredRepos = new Set();
+// Load repos from repos.json
+const REPOS_FILE = path.join(__dirname, 'repos.json');
+let repos = [];
+try {
+  if (fs.existsSync(REPOS_FILE)) {
+    repos = JSON.parse(fs.readFileSync(REPOS_FILE, 'utf8'));
+    console.log(`Loaded ${repos.length} repos from repos.json`);
+  }
+} catch (error) {
+  console.error('Error loading repos.json:', error.message);
+}
 
 // Log config for debugging
 console.log('Config loaded:', {
@@ -71,7 +77,7 @@ console.log('Config loaded:', {
     github: u.github?.username,
     gitlab: `${u.gitlab?.username} (${u.gitlab?.userId})`
   })),
-  watchedRepos: configuredRepos
+  repos
 });
 
 const app = express();
@@ -1075,11 +1081,11 @@ async function processWebhook(source, data, signature) {
 
 // ── Registration helpers ──
 
-async function commitUsersToGitHub(updatedUsers, commitMessage) {
+async function commitFileToGitHub(filePath, data, commitMessage) {
   const { token, repo } = config.github;
   if (!token || !repo) throw new Error('GITHUB_TOKEN and GITHUB_REPO are not configured on the server');
 
-  const apiUrl = `https://api.github.com/repos/${repo}/contents/users.json`;
+  const apiUrl = `https://api.github.com/repos/${repo}/contents/${filePath}`;
   const headers = {
     'Authorization': `token ${token}`,
     'Accept': 'application/vnd.github.v3+json',
@@ -1089,11 +1095,11 @@ async function commitUsersToGitHub(updatedUsers, commitMessage) {
   let sha;
   const getResponse = await fetch(apiUrl, { headers });
   if (getResponse.ok) {
-    const data = await getResponse.json();
-    sha = data.sha;
+    const result = await getResponse.json();
+    sha = result.sha;
   }
 
-  const content = Buffer.from(JSON.stringify(updatedUsers, null, 2) + '\n').toString('base64');
+  const content = Buffer.from(JSON.stringify(data, null, 2) + '\n').toString('base64');
   const body = {
     message: commitMessage,
     content,
@@ -1109,6 +1115,18 @@ async function commitUsersToGitHub(updatedUsers, commitMessage) {
   if (!putResponse.ok) {
     const text = await putResponse.text();
     throw new Error(`GitHub API returned ${putResponse.status}: ${text}`);
+  }
+}
+
+async function addRepoIfNew(repoKey) {
+  if (repos.includes(repoKey)) return;
+  repos.push(repoKey);
+  repos.sort();
+  try {
+    await commitFileToGitHub('repos.json', repos, `repos: add ${repoKey}`);
+    console.log(`New repo discovered and saved: ${repoKey}`);
+  } catch (err) {
+    console.error(`Failed to commit repos.json for ${repoKey}:`, err.message);
   }
 }
 
@@ -1552,7 +1570,7 @@ app.post('/register', async (req, res) => {
 
     // Commit to GitHub to persist across deploys
     try {
-      await commitUsersToGitHub(updatedUsers, `register: add ${name}`);
+      await commitFileToGitHub('users.json', updatedUsers, `register: add ${name}`);
     } catch (err) {
       console.error('Failed to commit users.json to GitHub:', err.message);
       return res.status(500).json({ error: 'Registered locally but failed to save permanently. Ask an admin to check the server logs.' });
@@ -1587,7 +1605,7 @@ app.post('/unregister', async (req, res) => {
     const updatedUsers = users.filter((_, i) => i !== userIndex);
 
     try {
-      await commitUsersToGitHub(updatedUsers, `unregister: remove ${removedUser.name}`);
+      await commitFileToGitHub('users.json', updatedUsers, `unregister: remove ${removedUser.name}`);
     } catch (err) {
       console.error('Failed to commit users.json to GitHub:', err.message);
       return res.status(500).json({ error: 'Failed to save changes. Ask an admin to check the server logs.' });
@@ -1655,7 +1673,7 @@ app.post('/edit', async (req, res) => {
     const updatedUsers = [...users];
 
     try {
-      await commitUsersToGitHub(updatedUsers, `edit: update ${updatedUser.name}`);
+      await commitFileToGitHub('users.json', updatedUsers, `edit: update ${updatedUser.name}`);
     } catch (err) {
       console.error('Failed to commit users.json to GitHub:', err.message);
       return res.status(500).json({ error: 'Updated locally but failed to save permanently. Ask an admin to check the server logs.' });
@@ -1674,7 +1692,7 @@ app.post('/webhook/github', async (req, res) => {
   console.log('Received GitHub webhook');
 
   const repoName = _.get(req.body, 'repository.full_name', '');
-  if (repoName) discoveredRepos.add(`github:${repoName}`);
+  if (repoName) addRepoIfNew(`github:${repoName}`);
 
   const signature = req.headers[GITHUB_SIGNATURE_HEADER];
   
@@ -1693,7 +1711,7 @@ app.post('/webhook/gitlab', async (req, res) => {
   console.log(`Received GitLab webhook: object_kind=${objectKind}`);
 
   const repoName = _.get(req.body, 'project.path_with_namespace', '');
-  if (repoName) discoveredRepos.add(`gitlab:${repoName}`);
+  if (repoName) addRepoIfNew(`gitlab:${repoName}`);
 
   const token = req.headers[GITLAB_TOKEN_HEADER];
   
@@ -1708,20 +1726,11 @@ app.post('/webhook/gitlab', async (req, res) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  const allRepos = [...new Set([...configuredRepos, ...discoveredRepos])].sort();
-  const newRepos = [...discoveredRepos].filter(r => !configuredRepos.includes(r)).sort();
-
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     users: users.map(u => u.name),
-    repos: {
-      configured: configuredRepos.length,
-      discovered: newRepos.length,
-      total: allRepos.length,
-      list: allRepos,
-      ...(newRepos.length > 0 ? { new: newRepos } : {})
-    }
+    repos
   });
 });
 
