@@ -1178,13 +1178,13 @@ function getRegistrationPage() {
 
     <div class="field">
       <label for="gitlabUsername">GitLab Username <span class="optional-tag">optional</span></label>
-      <div class="hint">Your username from your GitLab profile URL</div>
+      <div class="hint">Go to <a href="https://gitlab.disney.com/-/user_settings/profile" target="_blank" style="color:#4f6ef7">your GitLab profile</a> — your username is shown under your name (e.g. @Nilay.Barde)</div>
       <input type="text" id="gitlabUsername" name="gitlabUsername" placeholder="e.g. Nilay.Barde">
     </div>
 
     <div class="field">
       <label for="gitlabUserId">GitLab User ID <span class="optional-tag">required if GitLab username is set</span></label>
-      <details style="margin-bottom:.5rem"><summary style="font-size:.8rem;color:#4f6ef7;cursor:pointer;font-weight:400">How do I find my GitLab User ID?</summary><ol class="steps" style="margin-top:.5rem"><li>Log in to GitLab</li><li>Open Developer Tools (Cmd+Option+I or F12)</li><li>Go to the <strong>Console</strong> tab</li><li>Type <code style="background:#f0f0f0;padding:2px 6px;border-radius:4px">gon.current_user_id</code> and press Enter</li><li>The number shown is your User ID</li></ol></details>
+      <details style="margin-bottom:.5rem"><summary style="font-size:.8rem;color:#4f6ef7;cursor:pointer;font-weight:400">How do I find my GitLab User ID?</summary><ol class="steps" style="margin-top:.5rem"><li>Go to <a href="https://gitlab.disney.com" target="_blank" style="color:#4f6ef7">gitlab.disney.com</a> (must be on VPN)</li><li>Open Developer Tools (Cmd+Option+I or F12)</li><li>Go to the <strong>Console</strong> tab</li><li>Type <code style="background:#f0f0f0;padding:2px 6px;border-radius:4px">gon.current_user_id</code> and press Enter</li><li>The number shown is your User ID</li></ol></details>
       <input type="text" id="gitlabUserId" name="gitlabUserId" placeholder="e.g. 10957" inputmode="numeric">
     </div>
 
