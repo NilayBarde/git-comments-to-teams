@@ -100,13 +100,33 @@ const PIPELINE_OBJECT_KIND = 'pipeline';
 const PIPELINE_FAILED_STATUS = 'failed';
 const PIPELINE_SUCCESS_STATUS = 'success';
 
-// Patterns for bot usernames to ignore (GitLab project/group bots, GitHub app bots)
-const BOT_USERNAME_PATTERNS = [
-  /^project_\d+_bot_/i,
+// Bot classification patterns (sonar checked first, then project bots, then always-ignored)
+const SONAR_BOT_PATTERN = /^DTCI\.DL-Technology\.PE\.Infra\.CD$/i;
+const PROJECT_BOT_PATTERN = /^project_\d+_bot_/i;
+const ALWAYS_IGNORED_BOT_PATTERNS = [
   /^group_\d+_bot_/i,
-  /\[bot\]$/i,
-  /^DTCI\.DL-Technology\.PE\.Infra\.CD$/i
+  /\[bot\]$/i
 ];
+
+const NOTIFICATION_DEFAULTS = {
+  comments: true, mentions: true, approvals: true,
+  merges: true, pipelines: true, reviewRequests: true,
+  sonarComments: false, aiReviewComments: false,
+  selfComments: false, selfMerges: false
+};
+
+const DISABLED_BY_PREFS = 'disabled by preferences';
+
+function sanitizeNotifications(raw) {
+  if (!raw || typeof raw !== 'object') return;
+  const sanitized = {};
+  for (const key of Object.keys(NOTIFICATION_DEFAULTS)) {
+    if (key in raw) {
+      sanitized[key] = raw[key] === true;
+    }
+  }
+  return sanitized;
+}
 
 function sanitizeUsername(str) {
   if (!str) return str;
@@ -198,12 +218,17 @@ function isCommentAuthor(user, source, commentAuthor) {
   return false;
 }
 
-/**
- * Check if a username belongs to a bot account
- */
-function isBotUser(username) {
-  if (!username) return false;
-  return BOT_USERNAME_PATTERNS.some(pattern => pattern.test(username));
+function classifyBotComment(username) {
+  if (!username) return null;
+  if (SONAR_BOT_PATTERN.test(username)) return 'sonar';
+  if (PROJECT_BOT_PATTERN.test(username)) return 'projectBot';
+  if (ALWAYS_IGNORED_BOT_PATTERNS.some(p => p.test(username))) return 'bot';
+  return null;
+}
+
+function userWantsNotification(user, type) {
+  const defaultVal = _.get(NOTIFICATION_DEFAULTS, type, true);
+  return _.get(user, `notifications.${type}`, defaultVal);
 }
 
 /**
@@ -1073,9 +1098,14 @@ async function processWebhook(source, data, signature) {
     
     if (prOwner) {
       const { mergedBy } = mergeEvent;
-      if (isCommentAuthor(prOwner, source, mergedBy)) {
+      const isSelfMerge = isCommentAuthor(prOwner, source, mergedBy);
+      if (isSelfMerge && !userWantsNotification(prOwner, 'selfMerges')) {
         console.log(`Ignoring self-merge by ${mergedBy} on their own ${prLabel}`);
         return { processed: false, reason: 'self-merge' };
+      }
+      if (!userWantsNotification(prOwner, 'merges')) {
+        console.log(`Skipping merge notification for ${prOwner.name} (disabled by preferences)`);
+        return { processed: false, reason: DISABLED_BY_PREFS };
       }
       console.log(`Processing ${source} merge event for ${prOwner.name}'s "${mergeEvent.prTitle}"`);
       const card = createMergeCard(mergeEvent);
@@ -1101,6 +1131,10 @@ async function processWebhook(source, data, signature) {
     const prOwner = findPROwner(source, prAuthor);
     
     if (prOwner) {
+      if (!userWantsNotification(prOwner, 'approvals')) {
+        console.log(`Skipping approval notification for ${prOwner.name} (disabled by preferences)`);
+        return { processed: false, reason: DISABLED_BY_PREFS };
+      }
       const stateLabel = state === 'approved' ? 'approval' : 'changes requested';
       console.log(`Processing ${source} ${stateLabel} from ${reviewedBy} for ${prOwner.name}'s "${approvalEvent.prTitle}"`);
       const card = createApprovalCard(approvalEvent);
@@ -1128,6 +1162,10 @@ async function processWebhook(source, data, signature) {
       const reviewer = findUserByUsername(source, reviewerUsername);
       if (!reviewer) continue;
       if (isCommentAuthor(reviewer, source, requestedBy)) continue;
+      if (!userWantsNotification(reviewer, 'reviewRequests')) {
+        console.log(`Skipping review-request notification for ${reviewer.name} (disabled by preferences)`);
+        continue;
+      }
 
       console.log(`Processing ${source} review request from ${requestedBy} to ${reviewer.name} on "${reviewRequestedEvent.prTitle}"`);
       const card = createReviewRequestedCard(reviewRequestedEvent);
@@ -1152,6 +1190,10 @@ async function processWebhook(source, data, signature) {
       const prOwner = findPROwner(source, prAuthor);
 
       if (prOwner) {
+        if (!userWantsNotification(prOwner, 'pipelines')) {
+          console.log(`Skipping pipeline notification for ${prOwner.name} (disabled by preferences)`);
+          return { processed: false, reason: DISABLED_BY_PREFS };
+        }
         const isFailed = pipelineType === 'pipeline_failed';
         const statusLabel = isFailed ? 'failure' : 'success';
         console.log(`Processing ${source} pipeline ${statusLabel} for ${prOwner.name}'s "${pipelineEvent.prTitle}"`);
@@ -1181,41 +1223,50 @@ async function processWebhook(source, data, signature) {
 
   const { prAuthor, commentAuthor, commentBody } = parsed;
 
-  // Filter out bot comments
-  if (isBotUser(commentAuthor)) {
+  const botType = classifyBotComment(commentAuthor);
+  if (botType === 'bot') {
     console.log(`Ignoring comment from bot user: ${commentAuthor}`);
     return { processed: false, reason: 'comment from bot user' };
   }
 
-  // Find the PR owner
-  const prOwner = findPROwner(source, prAuthor);
-  
-  // Find all mentioned users
-  const mentionedUsers = findMentionedUsers(commentBody, source);
-  
-  // Track who we've notified to avoid duplicates
-  const notifiedUsers = new Set();
-  
-  // Allow self-comments for testing (set ALLOW_SELF_COMMENTS=true)
-  const allowSelfComments = process.env.ALLOW_SELF_COMMENTS === 'true';
+  const botPrefKey = botType === 'sonar' ? 'sonarComments'
+    : botType === 'projectBot' ? 'aiReviewComments'
+    : null;
 
-  // Notify PR owner (if not commenting on their own PR, unless ALLOW_SELF_COMMENTS is set)
-  if (prOwner && (allowSelfComments || !isCommentAuthor(prOwner, source, commentAuthor))) {
-    console.log(`Processing ${source} comment from ${commentAuthor} on ${prOwner.name}'s "${parsed.prTitle}"`);
-    const card = createAdaptiveCard(parsed);
-    const sent = await sendToTeams(card, prOwner.teamsWebhookUrl);
-    results.push({ type: 'comment', user: prOwner.name, sent });
-    notifiedUsers.add(prOwner.name);
+  const prOwner = findPROwner(source, prAuthor);
+  const mentionedUsers = findMentionedUsers(commentBody, source);
+  const notifiedUsers = new Set();
+
+  if (prOwner) {
+    const isSelfComment = isCommentAuthor(prOwner, source, commentAuthor);
+    if (isSelfComment && !userWantsNotification(prOwner, 'selfComments')) {
+      console.log(`Ignoring self-comment by ${commentAuthor} on their own ${prLabel}`);
+    } else {
+      const wantsComments = userWantsNotification(prOwner, 'comments');
+      const wantsBotType = botPrefKey ? userWantsNotification(prOwner, botPrefKey) : true;
+
+      if (wantsComments && wantsBotType) {
+        console.log(`Processing ${source} comment from ${commentAuthor} on ${prOwner.name}'s "${parsed.prTitle}"`);
+        const card = createAdaptiveCard(parsed);
+        const sent = await sendToTeams(card, prOwner.teamsWebhookUrl);
+        results.push({ type: 'comment', user: prOwner.name, sent });
+        notifiedUsers.add(prOwner.name);
+      } else {
+        console.log(`Skipping comment notification for ${prOwner.name} (disabled by preferences)`);
+      }
+    }
   }
 
-  // Notify mentioned users (if not the comment author and not already notified as PR owner)
   for (const { user, mentionedAs } of mentionedUsers) {
-    // Skip if this user is the comment author (unless ALLOW_SELF_COMMENTS is set)
-    if (!allowSelfComments && isCommentAuthor(user, source, commentAuthor)) {
-      continue;
-    }
-    // Skip if already notified as PR owner
-    if (notifiedUsers.has(user.name)) {
+    const isSelfMention = isCommentAuthor(user, source, commentAuthor);
+    if (isSelfMention && !userWantsNotification(user, 'selfComments')) continue;
+    if (notifiedUsers.has(user.name)) continue;
+
+    const wantsMentions = userWantsNotification(user, 'mentions');
+    const wantsBotType = botPrefKey ? userWantsNotification(user, botPrefKey) : true;
+
+    if (!wantsMentions || !wantsBotType) {
+      console.log(`Skipping mention notification for ${user.name} (disabled by preferences)`);
       continue;
     }
     
@@ -1303,6 +1354,43 @@ async function addRepoIfNew(repoKey) {
   }
 }
 
+const TOGGLE_CSS = `
+  .toggle { display: flex; align-items: center; gap: .5rem; font-weight: 400; font-size: .9rem; margin-bottom: .5rem; cursor: pointer; }
+  .toggle input[type="checkbox"] { width: 1rem; height: 1rem; cursor: pointer; }`;
+
+const NOTIF_CHECKBOXES_HTML = `
+    <div class="field">
+      <label>Notification Preferences</label>
+      <div class="hint">Choose which events you want to be notified about</div>
+      <label class="toggle"><input type="checkbox" id="notif-comments" checked> Comments on your PRs/MRs</label>
+      <label class="toggle"><input type="checkbox" id="notif-mentions" checked> @mentions in comments</label>
+      <label class="toggle"><input type="checkbox" id="notif-approvals" checked> Approvals and change requests</label>
+      <label class="toggle"><input type="checkbox" id="notif-merges" checked> PRs/MRs merged</label>
+      <label class="toggle"><input type="checkbox" id="notif-pipelines" checked> Pipeline results</label>
+      <label class="toggle"><input type="checkbox" id="notif-reviewRequests" checked> Review requests</label>
+      <hr style="margin:.75rem 0;border:none;border-top:1px solid #e0e0e0">
+      <div class="hint">Bot comments (off by default)</div>
+      <label class="toggle"><input type="checkbox" id="notif-sonarComments"> SonarQube analysis comments</label>
+      <label class="toggle"><input type="checkbox" id="notif-aiReviewComments"> AI review / project bot comments</label>
+      <hr style="margin:.75rem 0;border:none;border-top:1px solid #e0e0e0">
+      <div class="hint">Self-activity (off by default)</div>
+      <label class="toggle"><input type="checkbox" id="notif-selfComments"> Your own comments on your PRs/MRs</label>
+      <label class="toggle"><input type="checkbox" id="notif-selfMerges"> When you merge your own PRs/MRs</label>
+    </div>`;
+
+const NOTIF_COLLECT_JS = `{
+          comments: document.getElementById('notif-comments').checked,
+          mentions: document.getElementById('notif-mentions').checked,
+          approvals: document.getElementById('notif-approvals').checked,
+          merges: document.getElementById('notif-merges').checked,
+          pipelines: document.getElementById('notif-pipelines').checked,
+          reviewRequests: document.getElementById('notif-reviewRequests').checked,
+          sonarComments: document.getElementById('notif-sonarComments').checked,
+          aiReviewComments: document.getElementById('notif-aiReviewComments').checked,
+          selfComments: document.getElementById('notif-selfComments').checked,
+          selfMerges: document.getElementById('notif-selfMerges').checked
+        }`;
+
 function getRegistrationPage() {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1335,6 +1423,7 @@ function getRegistrationPage() {
   .msg.success { background: #e6f9ed; color: #1a7a3a; }
   .msg.error { background: #fde8e8; color: #b91c1c; }
   .optional-tag { font-weight: 400; color: #999; font-size: .8rem; }
+  ${TOGGLE_CSS}
 </style>
 </head>
 <body>
@@ -1390,6 +1479,8 @@ function getRegistrationPage() {
       <input type="text" id="mentionAliases" name="mentionAliases" placeholder="e.g. espn-core-web, bet-squad">
     </div>
 
+    ${NOTIF_CHECKBOXES_HTML}
+
     <button type="submit" id="submitBtn">Sign Up</button>
     <div id="msg"></div>
   </form>
@@ -1444,7 +1535,8 @@ document.getElementById('regForm').addEventListener('submit', async (e) => {
         gitlabUsername: gitlabUser,
         gitlabUserId: gitlabId,
         githubUsername: githubUser,
-        mentionAliases: aliases
+        mentionAliases: aliases,
+        notifications: ${NOTIF_COLLECT_JS}
       })
     });
     const data = await res.json();
@@ -1575,6 +1667,7 @@ function getEditPage() {
   .nav { font-size: .85rem; margin-bottom: 1rem; }
   .nav a { color: #4f6ef7; text-decoration: none; }
   .nav a:hover { text-decoration: underline; }
+  ${TOGGLE_CSS}
 </style>
 </head>
 <body>
@@ -1614,6 +1707,8 @@ function getEditPage() {
       <input type="text" id="mentionAliases" placeholder="e.g. espn-core-web, bet-squad">
     </div>
 
+    ${NOTIF_CHECKBOXES_HTML}
+
     <button type="submit" id="saveBtn">Save Changes</button>
     <div id="editMsg"></div>
   </form>
@@ -1637,6 +1732,17 @@ async function lookupUser() {
     document.getElementById('teamsWebhookUrl').value = data.teamsWebhookUrl || '';
     document.getElementById('githubUsername').value = data.github?.username || '';
     document.getElementById('mentionAliases').value = (data.mentionAliases || []).join(', ');
+    const notifs = data.notifications || {};
+    document.getElementById('notif-comments').checked = notifs.comments !== false;
+    document.getElementById('notif-mentions').checked = notifs.mentions !== false;
+    document.getElementById('notif-approvals').checked = notifs.approvals !== false;
+    document.getElementById('notif-merges').checked = notifs.merges !== false;
+    document.getElementById('notif-pipelines').checked = notifs.pipelines !== false;
+    document.getElementById('notif-reviewRequests').checked = notifs.reviewRequests !== false;
+    document.getElementById('notif-sonarComments').checked = notifs.sonarComments === true;
+    document.getElementById('notif-aiReviewComments').checked = notifs.aiReviewComments === true;
+    document.getElementById('notif-selfComments').checked = notifs.selfComments === true;
+    document.getElementById('notif-selfMerges').checked = notifs.selfMerges === true;
     document.getElementById('lookupCard').classList.add('hidden');
     document.getElementById('editForm').classList.remove('hidden');
   } catch (err) {
@@ -1679,7 +1785,8 @@ document.getElementById('editForm').addEventListener('submit', async (e) => {
         gitlabUsername: document.getElementById('gitlabUsername').value.trim(),
         teamsWebhookUrl: webhookUrl,
         githubUsername: document.getElementById('githubUsername').value.trim(),
-        mentionAliases: aliases
+        mentionAliases: aliases,
+        notifications: ${NOTIF_COLLECT_JS}
       })
     });
     const data = await res.json();
@@ -1760,6 +1867,8 @@ app.post('/register', async (req, res) => {
     if (mentionAliases && mentionAliases.length > 0) {
       newUser.mentionAliases = mentionAliases;
     }
+
+    newUser.notifications = sanitizeNotifications(req.body.notifications) || { ...NOTIFICATION_DEFAULTS };
 
     // Validate webhook by sending a test notification
     const testCard = {
@@ -1861,7 +1970,8 @@ app.get('/api/user/:gitlabUsername', (req, res) => {
     teamsWebhookUrl: user.teamsWebhookUrl,
     github: user.github,
     gitlab: user.gitlab,
-    mentionAliases: user.mentionAliases || []
+    mentionAliases: user.mentionAliases || [],
+    notifications: user.notifications || {}
   });
 });
 
@@ -1901,6 +2011,11 @@ app.post('/edit', async (req, res) => {
       updatedUser.mentionAliases = mentionAliases;
     } else {
       delete updatedUser.mentionAliases;
+    }
+
+    const notifications = sanitizeNotifications(req.body.notifications);
+    if (notifications) {
+      updatedUser.notifications = notifications;
     }
 
     users[userIndex] = updatedUser;
