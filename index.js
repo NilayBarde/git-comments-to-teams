@@ -47,6 +47,12 @@ users.forEach((user, index) => {
   }
 });
 
+// Parse configured repos and track discovered ones
+const configuredRepos = process.env.WATCHED_REPOS
+  ? process.env.WATCHED_REPOS.split(',').map(r => r.trim()).filter(Boolean)
+  : [];
+const discoveredRepos = new Set();
+
 // Log config for debugging
 console.log('Config loaded:', {
   usersCount: users.length,
@@ -55,7 +61,8 @@ console.log('Config loaded:', {
     teamsWebhookUrl: u.teamsWebhookUrl ? 'SET' : 'NOT SET',
     github: u.github?.username,
     gitlab: `${u.gitlab?.username} (${u.gitlab?.userId})`
-  }))
+  })),
+  watchedRepos: configuredRepos
 });
 
 const app = express();
@@ -1061,6 +1068,9 @@ async function processWebhook(source, data, signature) {
 app.post('/webhook/github', async (req, res) => {
   console.log('Received GitHub webhook');
 
+  const repoName = _.get(req.body, 'repository.full_name', '');
+  if (repoName) discoveredRepos.add(`github:${repoName}`);
+
   const signature = req.headers[GITHUB_SIGNATURE_HEADER];
   
   if (!verifyGitHubSignature(req.body, signature)) {
@@ -1077,6 +1087,9 @@ app.post('/webhook/gitlab', async (req, res) => {
   const objectKind = _.get(req.body, 'object_kind', 'unknown');
   console.log(`Received GitLab webhook: object_kind=${objectKind}`);
 
+  const repoName = _.get(req.body, 'project.path_with_namespace', '');
+  if (repoName) discoveredRepos.add(`gitlab:${repoName}`);
+
   const token = req.headers[GITLAB_TOKEN_HEADER];
   
   if (!verifyGitLabToken(token)) {
@@ -1090,7 +1103,20 @@ app.post('/webhook/gitlab', async (req, res) => {
 
 // Health check endpoint
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  const allRepos = [...new Set([...configuredRepos, ...discoveredRepos])].sort();
+  const newRepos = [...discoveredRepos].filter(r => !configuredRepos.includes(r)).sort();
+
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    repos: {
+      configured: configuredRepos.length,
+      discovered: newRepos.length,
+      total: allRepos.length,
+      list: allRepos,
+      ...(newRepos.length > 0 ? { new: newRepos } : {})
+    }
+  });
 });
 
 // Start server
