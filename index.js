@@ -107,6 +107,11 @@ const BOT_USERNAME_PATTERNS = [
   /^DTCI\.DL-Technology\.PE\.Infra\.CD$/i
 ];
 
+function sanitizeUsername(str) {
+  if (!str) return str;
+  return str.trim().replace(/^@/, '');
+}
+
 // Parse JSON body
 app.use(express.json());
 
@@ -1496,7 +1501,9 @@ app.get('/register', (req, res) => {
 
 app.post('/register', async (req, res) => {
   try {
-    const { teamsWebhookUrl, gitlabUsername, gitlabUserId, githubUsername, mentionAliases } = req.body;
+    const { teamsWebhookUrl, gitlabUserId, mentionAliases } = req.body;
+    const gitlabUsername = sanitizeUsername(req.body.gitlabUsername);
+    const githubUsername = sanitizeUsername(req.body.githubUsername);
 
     if (!teamsWebhookUrl) {
       return res.status(400).json({ error: 'Teams Webhook URL is required' });
@@ -1590,7 +1597,7 @@ app.get('/unregister', (req, res) => {
 
 app.post('/unregister', async (req, res) => {
   try {
-    const { gitlabUsername } = req.body;
+    const gitlabUsername = sanitizeUsername(req.body.gitlabUsername);
     if (!gitlabUsername) {
       return res.status(400).json({ error: 'GitLab username is required' });
     }
@@ -1640,7 +1647,9 @@ app.get('/api/user/:gitlabUsername', (req, res) => {
 
 app.post('/edit', async (req, res) => {
   try {
-    const { gitlabUsername, teamsWebhookUrl, githubUsername, mentionAliases } = req.body;
+    const gitlabUsername = sanitizeUsername(req.body.gitlabUsername);
+    const githubUsername = sanitizeUsername(req.body.githubUsername);
+    const { teamsWebhookUrl, mentionAliases } = req.body;
 
     if (!gitlabUsername) {
       return res.status(400).json({ error: 'GitLab username is required' });
