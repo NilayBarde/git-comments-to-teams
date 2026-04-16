@@ -112,6 +112,15 @@ function sanitizeUsername(str) {
   return str.trim().replace(/^@/, '');
 }
 
+function looksLikeOwnServerUrl(url) {
+  try {
+    const host = new URL(url).hostname;
+    return host.endsWith('onrender.com') || host === 'localhost';
+  } catch {
+    return false;
+  }
+}
+
 // Parse JSON body
 app.use(express.json());
 
@@ -1237,18 +1246,45 @@ document.getElementById('regForm').addEventListener('submit', async (e) => {
   msg.className = 'msg';
   msg.textContent = '';
 
+  const webhookUrl = document.getElementById('teamsWebhookUrl').value.trim();
+  const gitlabUser = document.getElementById('gitlabUsername').value.trim();
+  const gitlabId = document.getElementById('gitlabUserId').value.trim();
+  const githubUser = document.getElementById('githubUsername').value.trim();
+  const strip = s => s.trim().replace(/^@/, '');
   const aliases = document.getElementById('mentionAliases').value
-    .split(',').map(s => s.trim()).filter(Boolean);
+    .split(',').map(strip).filter(Boolean);
 
   try {
+    let parsedOk = false;
+    try {
+      const host = new URL(webhookUrl).hostname;
+      parsedOk = true;
+      if (host.endsWith('onrender.com') || host === 'localhost') {
+        throw new Error('That looks like this server\\x27s URL, not a Teams webhook URL. Please paste the workflow URL from Power Automate — see the instructions above.');
+      }
+    } catch (urlErr) {
+      if (parsedOk) throw urlErr;
+      throw new Error('Please enter a valid URL for the Teams webhook.');
+    }
+
+    if (!gitlabUser && !githubUser) {
+      throw new Error('Please enter at least one username (GitLab or GitHub).');
+    }
+    if (gitlabUser && !gitlabId) {
+      throw new Error('GitLab User ID is required when a GitLab username is provided.');
+    }
+    if (gitlabId && isNaN(Number(gitlabId))) {
+      throw new Error('GitLab User ID must be a number (e.g. 12345).');
+    }
+
     const res = await fetch('/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        teamsWebhookUrl: document.getElementById('teamsWebhookUrl').value.trim(),
-        gitlabUsername: document.getElementById('gitlabUsername').value.trim(),
-        gitlabUserId: document.getElementById('gitlabUserId').value.trim(),
-        githubUsername: document.getElementById('githubUsername').value.trim(),
+        teamsWebhookUrl: webhookUrl,
+        gitlabUsername: gitlabUser,
+        gitlabUserId: gitlabId,
+        githubUsername: githubUser,
         mentionAliases: aliases
       })
     });
@@ -1460,15 +1496,29 @@ document.getElementById('editForm').addEventListener('submit', async (e) => {
   btn.textContent = 'Saving…';
   msg.className = 'msg';
   msg.textContent = '';
+  const webhookUrl = document.getElementById('teamsWebhookUrl').value.trim();
+  const strip = s => s.trim().replace(/^@/, '');
   const aliases = document.getElementById('mentionAliases').value
-    .split(',').map(s => s.trim()).filter(Boolean);
+    .split(',').map(strip).filter(Boolean);
   try {
+    let parsedOk = false;
+    try {
+      const host = new URL(webhookUrl).hostname;
+      parsedOk = true;
+      if (host.endsWith('onrender.com') || host === 'localhost') {
+        throw new Error('That looks like this server\\x27s URL, not a Teams webhook URL. Please paste the workflow URL from Power Automate.');
+      }
+    } catch (urlErr) {
+      if (parsedOk) throw urlErr;
+      throw new Error('Please enter a valid URL for the Teams webhook.');
+    }
+
     const res = await fetch('/edit', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         gitlabUsername: document.getElementById('gitlabUsername').value.trim(),
-        teamsWebhookUrl: document.getElementById('teamsWebhookUrl').value.trim(),
+        teamsWebhookUrl: webhookUrl,
         githubUsername: document.getElementById('githubUsername').value.trim(),
         mentionAliases: aliases
       })
@@ -1501,12 +1551,17 @@ app.get('/register', (req, res) => {
 
 app.post('/register', async (req, res) => {
   try {
-    const { teamsWebhookUrl, gitlabUserId, mentionAliases } = req.body;
+    const { teamsWebhookUrl, gitlabUserId } = req.body;
+    const mentionAliases = (req.body.mentionAliases || []).map(a => sanitizeUsername(a)).filter(Boolean);
     const gitlabUsername = sanitizeUsername(req.body.gitlabUsername);
     const githubUsername = sanitizeUsername(req.body.githubUsername);
 
     if (!teamsWebhookUrl) {
       return res.status(400).json({ error: 'Teams Webhook URL is required' });
+    }
+
+    if (looksLikeOwnServerUrl(teamsWebhookUrl)) {
+      return res.status(400).json({ error: 'That looks like this server\'s URL, not a Teams webhook URL. Please paste the workflow URL from Power Automate — see the instructions above.' });
     }
 
     if (!gitlabUsername && !githubUsername) {
@@ -1515,6 +1570,10 @@ app.post('/register', async (req, res) => {
 
     if (gitlabUsername && !gitlabUserId) {
       return res.status(400).json({ error: 'GitLab User ID is required when GitLab username is provided' });
+    }
+
+    if (gitlabUserId && isNaN(Number(gitlabUserId))) {
+      return res.status(400).json({ error: 'GitLab User ID must be a number' });
     }
 
     if (gitlabUsername) {
@@ -1649,13 +1708,18 @@ app.post('/edit', async (req, res) => {
   try {
     const gitlabUsername = sanitizeUsername(req.body.gitlabUsername);
     const githubUsername = sanitizeUsername(req.body.githubUsername);
-    const { teamsWebhookUrl, mentionAliases } = req.body;
+    const { teamsWebhookUrl } = req.body;
+    const mentionAliases = (req.body.mentionAliases || []).map(a => sanitizeUsername(a)).filter(Boolean);
 
     if (!gitlabUsername) {
       return res.status(400).json({ error: 'GitLab username is required' });
     }
     if (!teamsWebhookUrl) {
       return res.status(400).json({ error: 'Teams Webhook URL is required' });
+    }
+
+    if (looksLikeOwnServerUrl(teamsWebhookUrl)) {
+      return res.status(400).json({ error: 'That looks like this server\'s URL, not a Teams webhook URL. Please paste the workflow URL from Power Automate.' });
     }
 
     const usernameLower = gitlabUsername.toLowerCase().trim();
