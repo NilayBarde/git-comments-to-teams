@@ -16,9 +16,7 @@ const config = {
     repo: process.env.GITHUB_REPO
   },
   gitlab: {
-    webhookToken: process.env.GITLAB_WEBHOOK_TOKEN,
-    apiToken: process.env.GITLAB_API_TOKEN,
-    apiUrl: process.env.GITLAB_API_URL || 'https://gitlab.com'
+    webhookToken: process.env.GITLAB_WEBHOOK_TOKEN
   }
 };
 
@@ -1077,23 +1075,6 @@ async function processWebhook(source, data, signature) {
 
 // ── Registration helpers ──
 
-async function lookupGitLabUserId(username) {
-  const { apiUrl, apiToken } = config.gitlab;
-  if (!apiToken) throw new Error('GITLAB_API_TOKEN is not configured on the server');
-
-  const response = await fetch(
-    `${apiUrl}/api/v4/users?username=${encodeURIComponent(username)}`,
-    { headers: { 'PRIVATE-TOKEN': apiToken } }
-  );
-
-  if (!response.ok) throw new Error(`GitLab API returned ${response.status}`);
-
-  const results = await response.json();
-  if (results.length === 0) throw new Error(`GitLab user "${username}" not found`);
-
-  return results[0].id;
-}
-
 async function commitUsersToGitHub(updatedUsers, commitMessage) {
   const { token, repo } = config.github;
   if (!token || !repo) throw new Error('GITHUB_TOKEN and GITHUB_REPO are not configured on the server');
@@ -1197,8 +1178,14 @@ function getRegistrationPage() {
 
     <div class="field">
       <label for="gitlabUsername">GitLab Username <span class="optional-tag">optional</span></label>
-      <div class="hint">Your GitLab user ID will be looked up automatically</div>
+      <div class="hint">Your username from your GitLab profile URL</div>
       <input type="text" id="gitlabUsername" name="gitlabUsername" placeholder="e.g. Nilay.Barde">
+    </div>
+
+    <div class="field">
+      <label for="gitlabUserId">GitLab User ID <span class="optional-tag">required if GitLab username is set</span></label>
+      <details style="margin-bottom:.5rem"><summary style="font-size:.8rem;color:#4f6ef7;cursor:pointer;font-weight:400">How do I find my GitLab User ID?</summary><ol class="steps" style="margin-top:.5rem"><li>Log in to GitLab</li><li>Open Developer Tools (Cmd+Option+I or F12)</li><li>Go to the <strong>Console</strong> tab</li><li>Type <code style="background:#f0f0f0;padding:2px 6px;border-radius:4px">gon.current_user_id</code> and press Enter</li><li>The number shown is your User ID</li></ol></details>
+      <input type="text" id="gitlabUserId" name="gitlabUserId" placeholder="e.g. 10957" inputmode="numeric">
     </div>
 
     <div class="field">
@@ -1237,6 +1224,7 @@ document.getElementById('regForm').addEventListener('submit', async (e) => {
       body: JSON.stringify({
         teamsWebhookUrl: document.getElementById('teamsWebhookUrl').value.trim(),
         gitlabUsername: document.getElementById('gitlabUsername').value.trim(),
+        gitlabUserId: document.getElementById('gitlabUserId').value.trim(),
         githubUsername: document.getElementById('githubUsername').value.trim(),
         mentionAliases: aliases
       })
@@ -1490,7 +1478,7 @@ app.get('/register', (req, res) => {
 
 app.post('/register', async (req, res) => {
   try {
-    const { teamsWebhookUrl, gitlabUsername, githubUsername, mentionAliases } = req.body;
+    const { teamsWebhookUrl, gitlabUsername, gitlabUserId, githubUsername, mentionAliases } = req.body;
 
     if (!teamsWebhookUrl) {
       return res.status(400).json({ error: 'Teams Webhook URL is required' });
@@ -1498,6 +1486,10 @@ app.post('/register', async (req, res) => {
 
     if (!gitlabUsername && !githubUsername) {
       return res.status(400).json({ error: 'At least one username (GitLab or GitHub) is required' });
+    }
+
+    if (gitlabUsername && !gitlabUserId) {
+      return res.status(400).json({ error: 'GitLab User ID is required when GitLab username is provided' });
     }
 
     if (gitlabUsername) {
@@ -1515,12 +1507,7 @@ app.post('/register', async (req, res) => {
     const newUser = { name, teamsWebhookUrl };
 
     if (gitlabUsername) {
-      try {
-        const userId = await lookupGitLabUserId(gitlabUsername);
-        newUser.gitlab = { username: gitlabUsername, userId };
-      } catch (err) {
-        return res.status(400).json({ error: `GitLab lookup failed: ${err.message}` });
-      }
+      newUser.gitlab = { username: gitlabUsername, userId: Number(gitlabUserId) };
     }
 
     if (githubUsername) {
