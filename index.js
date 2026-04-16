@@ -1189,11 +1189,6 @@ function getRegistrationPage() {
     <h2>Your Details</h2>
 
     <div class="field">
-      <label for="name">Name</label>
-      <input type="text" id="name" name="name" placeholder="e.g. nilay" required>
-    </div>
-
-    <div class="field">
       <label for="teamsWebhookUrl">Teams Webhook URL</label>
       <div class="hint">The URL you copied from the Workflows step above</div>
       <input type="url" id="teamsWebhookUrl" name="teamsWebhookUrl" placeholder="https://..." required>
@@ -1239,7 +1234,6 @@ document.getElementById('regForm').addEventListener('submit', async (e) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: document.getElementById('name').value.trim(),
         teamsWebhookUrl: document.getElementById('teamsWebhookUrl').value.trim(),
         gitlabUsername: document.getElementById('gitlabUsername').value.trim(),
         githubUsername: document.getElementById('githubUsername').value.trim(),
@@ -1350,20 +1344,30 @@ app.get('/register', (req, res) => {
 
 app.post('/register', async (req, res) => {
   try {
-    const { name, teamsWebhookUrl, gitlabUsername, githubUsername, mentionAliases } = req.body;
+    const { teamsWebhookUrl, gitlabUsername, githubUsername, mentionAliases } = req.body;
 
-    if (!name || !teamsWebhookUrl) {
-      return res.status(400).json({ error: 'Name and Teams Webhook URL are required' });
+    if (!teamsWebhookUrl) {
+      return res.status(400).json({ error: 'Teams Webhook URL is required' });
     }
 
-    const nameLower = name.toLowerCase().trim();
-    const isDuplicate = users.some(u => u.name.toLowerCase() === nameLower);
-    if (isDuplicate) {
-      return res.status(409).json({ error: `User "${name}" is already registered` });
+    if (!gitlabUsername && !githubUsername) {
+      return res.status(400).json({ error: 'At least one username (GitLab or GitHub) is required' });
     }
+
+    if (gitlabUsername) {
+      const isDuplicate = users.some(u => _.get(u, 'gitlab.username', '').toLowerCase() === gitlabUsername.toLowerCase().trim());
+      if (isDuplicate) {
+        return res.status(409).json({ error: `GitLab user "${gitlabUsername}" is already registered` });
+      }
+    }
+
+    // Derive name from GitLab username (First.Last → first) or fall back to GitHub username
+    const name = gitlabUsername
+      ? gitlabUsername.split('.')[0].toLowerCase()
+      : githubUsername.toLowerCase();
 
     // Build user object
-    const newUser = { name: nameLower, teamsWebhookUrl };
+    const newUser = { name, teamsWebhookUrl };
 
     if (gitlabUsername) {
       try {
@@ -1398,7 +1402,7 @@ app.post('/register', async (req, res) => {
             color: 'Good'
           }, {
             type: 'TextBlock',
-            text: `Hi ${name}! Your notifications are set up. You'll start receiving alerts for comments, reviews, merges, and pipeline events.`,
+            text: `Hi ${name}! You're all set. You'll start receiving Teams alerts for comments, reviews, merges, and pipeline events.`,
             wrap: true
           }]
         }
@@ -1416,13 +1420,13 @@ app.post('/register', async (req, res) => {
 
     // Commit to GitHub to persist across deploys
     try {
-      await commitUsersToGitHub(updatedUsers, `register: add ${nameLower}`);
+      await commitUsersToGitHub(updatedUsers, `register: add ${name}`);
     } catch (err) {
       console.error('Failed to commit users.json to GitHub:', err.message);
       return res.status(500).json({ error: 'Registered locally but failed to save permanently. Ask an admin to check the server logs.' });
     }
 
-    console.log(`New user registered: ${nameLower}`);
+    console.log(`New user registered: ${name}`);
     res.json({ message: `Welcome, ${name}! You're all set. A test notification was sent to your Teams channel. The server will redeploy in about a minute to make it permanent.` });
   } catch (err) {
     console.error('Registration error:', err);
