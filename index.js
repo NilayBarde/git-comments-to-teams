@@ -112,7 +112,8 @@ const NOTIFICATION_DEFAULTS = {
   comments: true, mentions: true, approvals: true,
   merges: true, pipelines: true, reviewRequests: true,
   sonarComments: false, aiReviewComments: false,
-  selfComments: false, selfMerges: false
+  selfComments: false, selfMerges: false,
+  selfReviewRequests: false
 };
 
 const DISABLED_BY_PREFS = 'disabled by preferences';
@@ -1161,7 +1162,8 @@ async function processWebhook(source, data, signature) {
     for (const reviewerUsername of reviewers) {
       const reviewer = findUserByUsername(source, reviewerUsername);
       if (!reviewer) continue;
-      if (isCommentAuthor(reviewer, source, requestedBy)) continue;
+      const isSelfRequest = isCommentAuthor(reviewer, source, requestedBy);
+      if (isSelfRequest && !userWantsNotification(reviewer, 'selfReviewRequests')) continue;
       if (!userWantsNotification(reviewer, 'reviewRequests')) {
         console.log(`Skipping review-request notification for ${reviewer.name} (disabled by preferences)`);
         continue;
@@ -1376,6 +1378,7 @@ const NOTIF_CHECKBOXES_HTML = `
       <div class="hint">Self-activity (off by default)</div>
       <label class="toggle"><input type="checkbox" id="notif-selfComments"> Your own comments on your PRs/MRs</label>
       <label class="toggle"><input type="checkbox" id="notif-selfMerges"> When you merge your own PRs/MRs</label>
+      <label class="toggle"><input type="checkbox" id="notif-selfReviewRequests"> When you add yourself as a reviewer</label>
     </div>`;
 
 const NOTIF_COLLECT_JS = `{
@@ -1388,7 +1391,8 @@ const NOTIF_COLLECT_JS = `{
           sonarComments: document.getElementById('notif-sonarComments').checked,
           aiReviewComments: document.getElementById('notif-aiReviewComments').checked,
           selfComments: document.getElementById('notif-selfComments').checked,
-          selfMerges: document.getElementById('notif-selfMerges').checked
+          selfMerges: document.getElementById('notif-selfMerges').checked,
+          selfReviewRequests: document.getElementById('notif-selfReviewRequests').checked
         }`;
 
 function getRegistrationPage() {
@@ -1743,6 +1747,7 @@ async function lookupUser() {
     document.getElementById('notif-aiReviewComments').checked = notifs.aiReviewComments === true;
     document.getElementById('notif-selfComments').checked = notifs.selfComments === true;
     document.getElementById('notif-selfMerges').checked = notifs.selfMerges === true;
+    document.getElementById('notif-selfReviewRequests').checked = notifs.selfReviewRequests === true;
     document.getElementById('lookupCard').classList.add('hidden');
     document.getElementById('editForm').classList.remove('hidden');
   } catch (err) {
