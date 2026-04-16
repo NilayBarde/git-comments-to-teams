@@ -1760,42 +1760,49 @@ app.post('/edit', async (req, res) => {
   }
 });
 
-// GitHub webhook endpoint
-app.post('/webhook/github', async (req, res) => {
+// Unified webhook handler
+async function handleWebhook(req, res) {
+  const isGitLab = req.headers['x-gitlab-event'] || req.headers[GITLAB_TOKEN_HEADER] || _.has(req.body, 'object_kind');
+  const source = isGitLab ? 'gitlab' : 'github';
+
+  if (source === 'gitlab') {
+    const objectKind = _.get(req.body, 'object_kind', 'unknown');
+    console.log(`Received GitLab webhook: object_kind=${objectKind}`);
+
+    const repoName = _.get(req.body, 'project.path_with_namespace', '');
+    if (repoName) addRepoIfNew(`gitlab:${repoName}`);
+
+    const token = req.headers[GITLAB_TOKEN_HEADER];
+    if (!verifyGitLabToken(token)) {
+      console.error('Invalid GitLab token');
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+
+    const result = await processWebhook('gitlab', req.body);
+    return res.json(result);
+  }
+
   console.log('Received GitHub webhook');
 
   const repoName = _.get(req.body, 'repository.full_name', '');
   if (repoName) addRepoIfNew(`github:${repoName}`);
 
   const signature = req.headers[GITHUB_SIGNATURE_HEADER];
-  
   if (!verifyGitHubSignature(req.body, signature)) {
     console.error('Invalid GitHub signature');
     return res.status(401).json({ error: 'Invalid signature' });
   }
 
   const result = await processWebhook('github', req.body, signature);
-  res.json(result);
-});
+  return res.json(result);
+}
 
-// GitLab webhook endpoint
-app.post('/webhook/gitlab', async (req, res) => {
-  const objectKind = _.get(req.body, 'object_kind', 'unknown');
-  console.log(`Received GitLab webhook: object_kind=${objectKind}`);
+// Single webhook endpoint — auto-detects GitHub vs GitLab
+app.post('/webhook', handleWebhook);
 
-  const repoName = _.get(req.body, 'project.path_with_namespace', '');
-  if (repoName) addRepoIfNew(`gitlab:${repoName}`);
-
-  const token = req.headers[GITLAB_TOKEN_HEADER];
-  
-  if (!verifyGitLabToken(token)) {
-    console.error('Invalid GitLab token');
-    return res.status(401).json({ error: 'Invalid token' });
-  }
-
-  const result = await processWebhook('gitlab', req.body);
-  res.json(result);
-});
+// Legacy endpoints — keep for existing configurations
+app.post('/webhook/github', handleWebhook);
+app.post('/webhook/gitlab', handleWebhook);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -1812,7 +1819,6 @@ const port = _.get(config, 'port', 3000);
 app.listen(port, () => {
   console.log(`PR Comment Notifier running on port ${port}`);
   console.log(`Register: http://localhost:${port}/register`);
-  console.log(`GitHub webhook URL: http://localhost:${port}/webhook/github`);
-  console.log(`GitLab webhook URL: http://localhost:${port}/webhook/gitlab`);
+  console.log(`Webhook URL: http://localhost:${port}/webhook`);
   console.log(`Health check: http://localhost:${port}/health`);
 });
