@@ -95,6 +95,7 @@ const PR_CLOSED_ACTION = 'closed';
 const PR_REVIEW_SUBMITTED_ACTION = 'submitted';
 const PR_REVIEW_APPROVED_STATE = 'approved';
 const PR_REVIEW_CHANGES_REQUESTED_STATE = 'changes_requested';
+const REVIEW_REQUESTED_ACTION = 'review_requested';
 const PIPELINE_OBJECT_KIND = 'pipeline';
 const PIPELINE_FAILED_STATUS = 'failed';
 const PIPELINE_SUCCESS_STATUS = 'success';
@@ -167,6 +168,16 @@ function findPROwner(source, prAuthor) {
       return prAuthorStr === gitlabUserId;
     }
     return false;
+  });
+}
+
+function findUserByUsername(source, username) {
+  const usernameLower = String(username).toLowerCase();
+  return users.find(user => {
+    const configuredName = source === 'github'
+      ? _.get(user, 'github.username', '')
+      : _.get(user, 'gitlab.username', '');
+    return configuredName.toLowerCase() === usernameLower;
   });
 }
 
@@ -318,6 +329,61 @@ function parseGitLabApprovalEvent(body) {
     prUrl,
     reviewedBy: approvedBy,
     repoName
+  };
+}
+
+/**
+ * Parse GitHub review-requested event
+ */
+function parseGitHubReviewRequestedEvent(body) {
+  const action = _.get(body, 'action');
+  if (action !== REVIEW_REQUESTED_ACTION) return;
+
+  const pullRequest = _.get(body, 'pull_request');
+  const reviewer = _.get(body, 'requested_reviewer');
+  if (!pullRequest || !reviewer) return;
+
+  return {
+    type: 'review_requested',
+    source: 'github',
+    requestedBy: _.get(body, 'sender.login', ''),
+    reviewers: [_.get(reviewer, 'login', '')],
+    prAuthor: _.get(pullRequest, 'user.login', ''),
+    prTitle: _.get(pullRequest, 'title', ''),
+    prUrl: _.get(pullRequest, 'html_url', ''),
+    repoName: _.get(body, 'repository.full_name', '')
+  };
+}
+
+/**
+ * Parse GitLab reviewer-assigned event (MR update with changed reviewers)
+ */
+function parseGitLabReviewRequestedEvent(body) {
+  const objectKind = _.get(body, 'object_kind');
+  if (objectKind !== MERGE_REQUEST_OBJECT_KIND) return;
+
+  const action = _.get(body, 'object_attributes.action');
+  if (action !== 'update') return;
+
+  const reviewerChanges = _.get(body, 'changes.reviewers');
+  if (!reviewerChanges) return;
+
+  const previous = (reviewerChanges.previous || []).map(r => r.username);
+  const current = (reviewerChanges.current || []).map(r => r.username);
+  const newReviewers = current.filter(u => !previous.includes(u));
+  if (newReviewers.length === 0) return;
+
+  const mergeRequest = _.get(body, 'object_attributes');
+
+  return {
+    type: 'review_requested',
+    source: 'gitlab',
+    requestedBy: _.get(body, 'user.username', ''),
+    reviewers: newReviewers,
+    prAuthor: _.get(mergeRequest, 'author_id'),
+    prTitle: _.get(mergeRequest, 'title', ''),
+    prUrl: _.get(mergeRequest, 'url', ''),
+    repoName: _.get(body, 'project.path_with_namespace', '')
   };
 }
 
@@ -795,6 +861,50 @@ function createApprovalCard(data) {
   return card;
 }
 
+function createReviewRequestedCard(data) {
+  const { source, prTitle, prUrl, requestedBy, repoName } = data;
+  const sourceLabel = source === 'github' ? 'GitHub' : 'GitLab';
+  const prLabel = source === 'github' ? 'PR' : 'MR';
+
+  return {
+    type: 'message',
+    attachments: [{
+      contentType: 'application/vnd.microsoft.card.adaptive',
+      contentUrl: null,
+      content: {
+        type: 'AdaptiveCard',
+        $schema: 'http://adaptivecards.io/schemas/adaptive-card.json',
+        version: '1.4',
+        body: [
+          {
+            type: 'TextBlock',
+            text: `👀 ${requestedBy} requested your review`,
+            weight: 'Bolder',
+            size: 'Medium',
+            color: 'Accent'
+          },
+          {
+            type: 'FactSet',
+            facts: [
+              { title: 'Source:', value: sourceLabel },
+              { title: 'Repository:', value: repoName },
+              { title: `${prLabel}:`, value: prTitle },
+              { title: 'Requested by:', value: requestedBy }
+            ]
+          }
+        ],
+        actions: [
+          {
+            type: 'Action.OpenUrl',
+            title: `View ${prLabel}`,
+            url: prUrl
+          }
+        ]
+      }
+    }]
+  };
+}
+
 /**
  * Create Teams Adaptive Card for pipeline failure notifications
  */
@@ -1000,6 +1110,37 @@ async function processWebhook(source, data, signature) {
     
     console.log(`Ignoring approval event - ${prLabel} author not in configured users`);
     return { processed: false, reason: `${prLabel} author not configured` };
+  }
+
+  // Check for review-requested events
+  let reviewRequestedEvent;
+  if (source === 'github') {
+    reviewRequestedEvent = parseGitHubReviewRequestedEvent(data);
+  } else if (source === 'gitlab') {
+    reviewRequestedEvent = parseGitLabReviewRequestedEvent(data);
+  }
+
+  if (reviewRequestedEvent) {
+    const { requestedBy, reviewers } = reviewRequestedEvent;
+    const notifications = [];
+
+    for (const reviewerUsername of reviewers) {
+      const reviewer = findUserByUsername(source, reviewerUsername);
+      if (!reviewer) continue;
+      if (isCommentAuthor(reviewer, source, requestedBy)) continue;
+
+      console.log(`Processing ${source} review request from ${requestedBy} to ${reviewer.name} on "${reviewRequestedEvent.prTitle}"`);
+      const card = createReviewRequestedCard(reviewRequestedEvent);
+      const sent = await sendToTeams(card, reviewer.teamsWebhookUrl);
+      notifications.push({ user: reviewer.name, sent });
+    }
+
+    if (notifications.length === 0) {
+      console.log(`Ignoring review-requested event - no configured reviewers matched`);
+      return { processed: false, reason: 'no configured reviewers matched' };
+    }
+
+    return { processed: true, type: 'review_requested', notifications };
   }
 
   // Check for pipeline events (GitLab only)
