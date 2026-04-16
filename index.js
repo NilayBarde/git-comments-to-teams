@@ -1361,9 +1361,8 @@ app.post('/register', async (req, res) => {
       }
     }
 
-    // Derive name from GitLab username (First.Last → first) or fall back to GitHub username
     const name = gitlabUsername
-      ? gitlabUsername.split('.')[0].toLowerCase()
+      ? gitlabUsername.toLowerCase()
       : githubUsername.toLowerCase();
 
     // Build user object
