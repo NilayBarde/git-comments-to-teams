@@ -4,15 +4,21 @@ A self-hosted webhook server that receives GitHub PR and GitLab MR events and po
 
 ## Features
 
-- **Multi-User Support** - Route notifications to different Teams channels per user
-- **Comments on YOUR PRs/MRs** - Get notified when someone comments on your code
-- **@Mentions** - Get notified when someone mentions you or your team (e.g., `@bet-squad-web`)
-- **MR/PR Merged** - Get notified when your merge request is merged
-- **Approvals & Changes Requested** - Get notified on PR reviews
-- **Pipeline Failures & Successes** - Get notified when a pipeline fails or passes on your GitLab MR
-- **Filters out self-comments** - No notifications for your own comments
-- **Rich Adaptive Cards** - Beautiful formatting in Teams
-- **GitHub + GitLab support** - Including enterprise instances
+- **Multi-User Support** — Route notifications to different Teams channels per user
+- **Comments on YOUR PRs/MRs** — Get notified when someone comments on your code
+- **@Mentions** — Get notified when someone mentions you or your team alias (e.g., `@bet-squad-web`)
+- **MR/PR Merged** — Get notified when your merge request is merged
+- **Approvals & Changes Requested** — Get notified on PR reviews
+- **Review Requests** — Get notified when you're assigned as a reviewer
+- **Pipeline Failures & Successes** — Get notified when a pipeline fails or passes on your GitLab MR
+- **Per-User Notification Preferences** — Toggle each notification type on/off from the settings page
+- **Bot Comment Control** — Opt-in to SonarQube and project bot comment notifications (off by default)
+- **Self-Activity Toggles** — Optionally receive notifications for your own comments, merges, and self-assigned reviews
+- **Self-Service Registration** — Users register, edit settings, and unregister via web UI
+- **Webhook Health Monitoring** — Tracks last webhook per repo and alerts admins if repos go silent
+- **Unified Webhook Endpoint** — Auto-detects GitHub vs GitLab payloads
+- **Rich Adaptive Cards** — Beautiful formatting in Teams
+- **GitHub + GitLab support** — Including enterprise instances
 
 ## Quick Start
 
@@ -26,17 +32,20 @@ npm install
 
 ### 2. Configure Environment Variables
 
-Create a `.env` file with your user configuration:
+Create a `.env` file:
 
 ```bash
-USERS_CONFIG='[{"name":"nilay","teamsWebhookUrl":"https://your-teams-webhook-url","github":{"username":"NilayBarde"},"gitlab":{"username":"nilay.barde","userId":12345},"mentionAliases":["frontend-team","bet-squad-web"]}]'
+# Required — GitHub token and repo for persisting user/repo config
+GITHUB_TOKEN=ghp_your_personal_access_token
+GITHUB_REPO=YourUsername/your-config-repo
 
-# Optional: webhook secrets for verification
+# Optional — webhook secrets for verification
 GITHUB_WEBHOOK_SECRET=your-github-secret
 GITLAB_WEBHOOK_TOKEN=your-gitlab-token
-```
 
-For multiple users, add more objects to the JSON array - each user gets their own Teams channel!
+# Optional — admin webhook for health alerts
+ADMIN_WEBHOOK_URL=https://your-admin-teams-webhook-url
+```
 
 ### 3. Deploy to Render (Recommended)
 
@@ -54,115 +63,105 @@ Your webhook URL will be: `https://your-app-name.onrender.com`
 
 ### 4. Set Up Webhooks
 
-Configure webhooks in your GitLab/GitHub repos to point to your Render URL (see detailed instructions below).
+Configure webhooks in your GitLab/GitHub repos to point to your Render URL. You can use either:
+
+- **Unified endpoint** (recommended): `https://your-app.onrender.com/webhook`
+- **Source-specific**: `https://your-app.onrender.com/webhook/github` or `https://your-app.onrender.com/webhook/gitlab`
 
 ---
 
 ## Notification Types
 
-| Event | When You're Notified |
-|-------|---------------------|
-| **Comment** | Someone comments on YOUR MR/PR |
-| **@Mention** | Someone @mentions you or your team alias in ANY MR/PR |
-| **Approved** | YOUR MR/PR is approved by a reviewer ✅ |
-| **Changes Requested** | A reviewer requests changes on YOUR MR/PR ⚠️ |
-| **Merged** | YOUR MR/PR gets merged 🎉 |
-| **Pipeline Failed** | A pipeline fails on YOUR GitLab MR 🔴 |
-| **Pipeline Passed** | A pipeline succeeds on YOUR GitLab MR 🟢 |
+| Event | When You're Notified | Default |
+|-------|---------------------|---------|
+| **Comment** | Someone comments on YOUR MR/PR | On |
+| **@Mention** | Someone @mentions you or your team alias in ANY MR/PR | On |
+| **Approved** | YOUR MR/PR is approved by a reviewer | On |
+| **Changes Requested** | A reviewer requests changes on YOUR MR/PR | On |
+| **Merged** | YOUR MR/PR gets merged | On |
+| **Review Requested** | You're assigned as a reviewer on an MR/PR | On |
+| **Pipeline Failed** | A pipeline fails on YOUR GitLab MR | On |
+| **Pipeline Passed** | A pipeline succeeds on YOUR GitLab MR | On |
+| **SonarQube Comments** | SonarQube analysis posts a comment on your MR | Off |
+| **Project Bot Comments** | AI review / project bot posts a comment on your MR | Off |
+| **Self-Comments** | Your own comments on your PRs/MRs | Off |
+| **Self-Merges** | When you merge your own PRs/MRs | Off |
+| **Self-Review Requests** | When you add yourself as a reviewer | Off |
+
+All preferences are configurable per user from the **Edit Settings** page.
 
 ---
 
-## 🆕 New User? Start Here
+## Self-Service Registration
 
-Want to receive notifications? Follow these steps and send the info to the admin.
+Users manage their own configuration through a web UI — no admin needed.
 
-### Step 1: Create Your Teams Webhook
+| Page | URL | Description |
+|------|-----|-------------|
+| **Register** | `/register` | Sign up with your webhook URL, usernames, and preferences |
+| **Edit Settings** | `/edit` | Update your webhook URL, usernames, aliases, and notification preferences |
+| **Unregister** | `/unregister` | Remove yourself from the system |
 
-1. Open **Microsoft Teams**
-2. Create your own Team and Channel for notifications:
-   - Click "Join or create a team" → "Create team" → "From scratch" → "Private"
-   - Name it something like "My Notifications"
-   - Add a channel (e.g., "PR Comments")
-3. Click **Apps** (left sidebar) → Search **Workflows**
-4. Click **Create** tab
-5. Search for "**Send webhook alerts to a channel**" template
-6. Click it and follow the setup:
-   - Select the Team and Channel you just created
-   - Give it a name (e.g., "My PR Notifications")
-7. After saving, copy the **HTTP POST URL** - this is your webhook URL
+During registration, the server sends a test notification to verify the Teams webhook URL works before saving.
 
-### Step 2: Find Your Usernames & IDs
+---
 
-**GitHub Username:**
+## User Configuration
 
-- Go to GitHub and look at your profile URL: `github.com/YOUR_USERNAME`
+Each user in `users.json` has the following fields:
 
-**GitLab Username:**
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Display name for logging |
+| `teamsWebhookUrl` | Yes | User's Teams Workflow webhook URL |
+| `github.username` | For GitHub | GitHub username |
+| `gitlab.username` | For GitLab | GitLab username |
+| `gitlab.userId` | For GitLab | GitLab numeric user ID |
+| `mentionAliases` | No | Array of team aliases to watch (e.g., `["frontend-team"]`) |
+| `notifications` | No | Notification preferences object (see below) |
 
-- Go to GitLab and look at your profile URL: `gitlab.com/YOUR_USERNAME`
+### Notification Preferences
 
-**GitLab User ID (required for GitLab notifications):**
-
-1. Log in to GitLab
-2. Open browser Developer Tools (Cmd+Option+I or F12)
-3. Go to **Console** tab
-4. Type: `gon.current_user_id` and press Enter
-5. That number is your User ID
-
-### Step 3: Decide on Mention Aliases (Optional)
-
-If you want to get notified when someone @mentions a team you're on, list those aliases.
-For example, if people mention `@espn-core-web` and you want those notifications, include `"espn-core-web"`.
-
-### Step 4: Send Your Info to the Admin
-
-Copy this template and fill it out:
-
-```
-Name: [Your first name]
-Teams Webhook URL: [paste your URL from Step 1]
-
-GitHub Username: [your GitHub username, or leave blank if not using GitHub]
-
-GitLab Username: [your GitLab username]
-GitLab User ID: [the number from Step 2]
-
-Mention Aliases (optional): [comma-separated list, e.g., "espn-core-web, bet-squad"]
-```
-
-The admin will create a config object like this and add you to the system:
+The optional `notifications` object controls which events trigger notifications. When absent, defaults apply:
 
 ```json
 {
-  "name": "yourname",
-  "teamsWebhookUrl": "https://your-webhook-url",
-  "github": { "username": "YourGitHubUsername" },
-  "gitlab": { "username": "your.gitlab.username", "userId": 12345 },
-  "mentionAliases": ["espn-core-web", "your-team"]
+  "name": "nilay",
+  "teamsWebhookUrl": "https://...",
+  "gitlab": { "username": "Nilay.Barde", "userId": 10957 },
+  "notifications": {
+    "comments": true,
+    "mentions": true,
+    "approvals": true,
+    "merges": true,
+    "pipelines": true,
+    "reviewRequests": true,
+    "sonarComments": false,
+    "aiReviewComments": false,
+    "selfComments": false,
+    "selfMerges": false,
+    "selfReviewRequests": false
+  }
 }
 ```
 
 ---
 
-## Detailed Setup Instructions
-
-### Setting Up Teams Webhook (Workflows)
+## Setting Up Teams Webhook
 
 > **Note**: Microsoft has deprecated classic "Incoming Webhook" connectors. Use Teams Workflows instead.
 
-1. Open Microsoft Teams
-2. Click **Apps** (left sidebar) → Search **Workflows**
-3. Click **Create** tab
-4. Search for "**Send webhook alerts to a channel**" template
-5. Click it and follow the setup:
-   - Select your Team and Channel
-   - Give it a name (e.g., "PR Comment Alerts")
-6. After saving, the workflow will show you the **HTTP POST URL**
-7. Copy that URL - this is your `TEAMS_WEBHOOK_URL`
+1. Open **Microsoft Teams**
+2. Create your own Team and Channel for notifications (or use an existing one)
+3. Click **Apps** (left sidebar) → Search **Workflows**
+4. Click the **Create** tab
+5. Search for "**Send webhook alerts to a channel**" template
+6. Select your Team and Channel, give it a name (e.g., "PR Notifications")
+7. After saving, click **Copy webhook link** — that's your webhook URL
 
 **Tip**: Create a private channel just for yourself if you want personal notifications.
 
-### Finding Your GitLab User ID
+## Finding Your GitLab User ID
 
 The easiest way:
 
@@ -170,7 +169,7 @@ The easiest way:
 2. Open browser Developer Tools (Cmd+Option+I or F12)
 3. Go to **Console** tab
 4. Type: `gon.current_user_id`
-5. Press Enter - that number is your User ID
+5. Press Enter — that number is your User ID
 
 Alternative via API:
 
@@ -178,35 +177,66 @@ Alternative via API:
 curl "https://gitlab.com/api/v4/users?username=YOUR_USERNAME"
 ```
 
-### Setting Up GitLab Webhook
+## Setting Up GitLab Webhook
 
 1. Go to your GitLab **project** → **Settings** → **Webhooks**
    - (Or **group** settings to cover all projects in a group)
 2. Configure:
-   - **URL**: `https://your-app.onrender.com/webhook/gitlab`
+   - **URL**: `https://your-app.onrender.com/webhook`
    - **Secret token**: (optional) create a token and set `GITLAB_WEBHOOK_TOKEN`
    - **Trigger**:
      - ✅ **Comments** (for comment and @mention notifications)
-     - ✅ **Merge request events** (for merge and approval notifications)
-     - ✅ **Pipeline events** (for pipeline failure notifications)
+     - ✅ **Merge request events** (for merge, approval, and review request notifications)
+     - ✅ **Pipeline events** (for pipeline failure/success notifications)
    - **Enable SSL verification**: Yes
 3. Click **Add webhook**
 4. Click **Test** → **Note events** to verify
 
-### Setting Up GitHub Webhook
+## Setting Up GitHub Webhook
 
 1. Go to your GitHub **repository** → **Settings** → **Webhooks** → **Add webhook**
    - (Or **organization** settings for all repos)
 2. Configure:
-   - **Payload URL**: `https://your-app.onrender.com/webhook/github`
+   - **Payload URL**: `https://your-app.onrender.com/webhook`
    - **Content type**: `application/json`
    - **Secret**: (optional) create a secret and set `GITHUB_WEBHOOK_SECRET`
    - **Events**: Select "Let me select individual events" then check:
      - ✅ **Issue comments** (for comments)
      - ✅ **Pull request review comments** (for code review comments)
      - ✅ **Pull request reviews** (for approvals and changes requested)
-     - ✅ **Pull requests** (for merge notifications)
+     - ✅ **Pull requests** (for merge and review request notifications)
 3. Click **Add webhook**
+
+---
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/webhook` | POST | Unified webhook — auto-detects GitHub vs GitLab |
+| `/webhook/github` | POST | Receives GitHub webhook events |
+| `/webhook/gitlab` | POST | Receives GitLab webhook events |
+| `/register` | GET | Registration page |
+| `/register` | POST | Register a new user |
+| `/edit` | GET | Edit settings page |
+| `/edit` | POST | Update user settings |
+| `/unregister` | GET | Unregister page |
+| `/unregister` | POST | Remove a user |
+| `/api/user/:gitlabUsername` | GET | Fetch user config (used by edit page) |
+| `/health` | GET | Health check with per-repo webhook timestamps |
+
+---
+
+## Environment Variables Reference
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GITHUB_TOKEN` | Yes | GitHub personal access token for committing config changes |
+| `GITHUB_REPO` | Yes | GitHub repo for persisting `users.json` and `repos.json` (e.g., `NilayBarde/git-comments-to-teams`) |
+| `GITLAB_WEBHOOK_TOKEN` | No | Secret token for GitLab webhook verification |
+| `GITHUB_WEBHOOK_SECRET` | No | Secret for GitHub webhook signature verification |
+| `ADMIN_WEBHOOK_URL` | No | Teams webhook URL for admin health alerts |
+| `PORT` | No | Server port (default: 3000) |
 
 ---
 
@@ -231,60 +261,6 @@ node test-webhook.js github
 
 ---
 
-## Environment Variables Reference
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `USERS_CONFIG` | Yes | JSON array of user configurations (see below) |
-| `GITLAB_WEBHOOK_TOKEN` | No | Secret token for GitLab webhook verification |
-| `GITHUB_WEBHOOK_SECRET` | No | Secret for GitHub webhook signature verification |
-| `PORT` | No | Server port (default: 3000) |
-
-### USERS_CONFIG Structure
-
-Each user in the `USERS_CONFIG` array has the following fields:
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Display name for logging |
-| `teamsWebhookUrl` | Yes | User's Teams Workflow webhook URL |
-| `github.username` | For GitHub | GitHub username |
-| `gitlab.username` | For GitLab | GitLab username |
-| `gitlab.userId` | For GitLab | GitLab numeric user ID |
-| `mentionAliases` | No | Array of team aliases to watch (e.g., `["frontend-team"]`) |
-
-**Example with multiple users:**
-
-```json
-[
-  {
-    "name": "nilay",
-    "teamsWebhookUrl": "https://...",
-    "github": { "username": "NilayBarde" },
-    "gitlab": { "username": "nilay.barde", "userId": 10957 },
-    "mentionAliases": ["frontend-team"]
-  },
-  {
-    "name": "john",
-    "teamsWebhookUrl": "https://...",
-    "github": { "username": "johndoe" },
-    "gitlab": { "username": "john.doe", "userId": 12345 }
-  }
-]
-```
-
----
-
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/webhook/github` | POST | Receives GitHub webhook events |
-| `/webhook/gitlab` | POST | Receives GitLab webhook events |
-| `/health` | GET | Health check endpoint |
-
----
-
 ## Troubleshooting
 
 ### Webhook not receiving events
@@ -296,7 +272,7 @@ Each user in the `USERS_CONFIG` array has the following fields:
 
 ### Getting "author not configured" errors
 
-1. Check Render logs for the comparison - the PR/MR author isn't in your `USERS_CONFIG`
+1. Check Render logs for the comparison — the PR/MR author isn't in your user config
 2. Verify `gitlab.userId` in your user config matches your actual GitLab user ID (check with `gon.current_user_id` in browser console)
 3. For GitHub, verify `github.username` matches exactly (case-insensitive)
 
@@ -317,6 +293,10 @@ Each user in the `USERS_CONFIG` array has the following fields:
 1. Check that `mentionAliases` is set correctly in your user config (JSON array of strings)
 2. Verify the alias matches exactly how it appears in GitLab/GitHub (e.g., `@bet-squad-web`)
 3. Check Render logs for "Processing mention" messages
+
+### Notifications you don't want
+
+Visit the **Edit Settings** page (`/edit`) and uncheck the notification types you want to disable.
 
 ---
 
@@ -340,7 +320,7 @@ Each user in the `USERS_CONFIG` array has the following fields:
 brew install flyctl
 fly auth login
 fly launch
-fly secrets set USERS_CONFIG='[{"name":"you","teamsWebhookUrl":"https://...","gitlab":{"username":"you","userId":12345}}]'
+fly secrets set GITHUB_TOKEN='ghp_...' GITHUB_REPO='YourUser/your-repo'
 ```
 
 ### Local with ngrok (Testing only)
