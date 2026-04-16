@@ -129,11 +129,16 @@ app.use(express.json());
  */
 function verifyGitHubSignature(payload, signature) {
   const secret = _.get(config, 'github.webhookSecret');
-  if (!secret) return true; // Skip verification if no secret configured
-  
+  if (!secret) return true;
+
+  if (!signature) return false;
+
   const hmac = crypto.createHmac('sha256', secret);
   const digest = 'sha256=' + hmac.update(JSON.stringify(payload)).digest('hex');
-  return crypto.timingSafeEqual(Buffer.from(signature || ''), Buffer.from(digest));
+  const sigBuffer = Buffer.from(signature);
+  const digestBuffer = Buffer.from(digest);
+  if (sigBuffer.length !== digestBuffer.length) return false;
+  return crypto.timingSafeEqual(sigBuffer, digestBuffer);
 }
 
 /**
@@ -194,26 +199,25 @@ function isBotUser(username) {
  * Find all users who are mentioned in a comment
  * @returns {Array<{user: Object, mentionedAs: string}>} Array of user/mention pairs
  */
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function findMentionedUsers(commentBody, source) {
   if (!commentBody) return [];
   
   const mentionedUsers = [];
   
   users.forEach(user => {
-    // Get the user's username for the source
     const username = source === 'github' 
       ? _.get(user, 'github.username', '')
       : _.get(user, 'gitlab.username', '');
     
-    // Get additional team aliases for this user
     const aliases = _.get(user, 'mentionAliases', []);
-    
-    // Combine username and aliases
     const allNames = [username, ...aliases].filter(Boolean);
     
-    // Check if any name is mentioned
     const mentioned = allNames.find(name => {
-      const pattern = new RegExp(`@${name}\\b`, 'i');
+      const pattern = new RegExp(`@${escapeRegExp(name)}\\b`, 'i');
       return pattern.test(commentBody);
     });
     
@@ -416,20 +420,16 @@ function parseGitHubPayload(body) {
   const action = _.get(body, 'action');
   if (action !== COMMENT_CREATED_ACTION) return;
 
-  // Handle issue comments on PRs
   const issueComment = _.get(body, 'comment');
   const issue = _.get(body, 'issue');
-  const pullRequest = _.get(body, 'pull_request') || issue;
-  
-  if (!pullRequest || !issueComment) return;
-  
-  // Check if it's actually a PR (issues don't have pull_request field in the issue object)
-  const isPR = _.has(issue, 'pull_request') || _.has(body, 'pull_request');
+  if (!issue || !issueComment) return;
+
+  const isPR = _.has(issue, 'pull_request');
   if (!isPR) return;
 
-  const prAuthor = _.get(pullRequest, 'user.login', '');
-  const prTitle = _.get(pullRequest, 'title', '');
-  const prUrl = _.get(pullRequest, 'html_url', '');
+  const prAuthor = _.get(issue, 'user.login', '');
+  const prTitle = _.get(issue, 'title', '');
+  const prUrl = _.get(issue, 'pull_request.html_url', '') || _.get(issue, 'html_url', '');
   const commentAuthor = _.get(issueComment, 'user.login', '');
   const commentBody = _.get(issueComment, 'body', '');
   const commentUrl = _.get(issueComment, 'html_url', '');
@@ -1095,7 +1095,24 @@ async function processWebhook(source, data, signature) {
 
 // ── Registration helpers ──
 
-async function commitFileToGitHub(filePath, data, commitMessage) {
+let commitQueue = Promise.resolve();
+
+function commitFileToGitHub(filePath, data, commitMessage) {
+  const pending = commitQueue.then(() => _commitFileToGitHub(filePath, data, commitMessage));
+  commitQueue = pending.catch(() => {});
+  return pending;
+}
+
+function writeLocalFile(filePath, data) {
+  try {
+    const fullPath = path.join(__dirname, filePath);
+    fs.writeFileSync(fullPath, JSON.stringify(data, null, 2) + '\n');
+  } catch (err) {
+    console.error(`Failed to write local ${filePath}:`, err.message);
+  }
+}
+
+async function _commitFileToGitHub(filePath, data, commitMessage) {
   const { token, repo } = config.github;
   if (!token || !repo) throw new Error('GITHUB_TOKEN and GITHUB_REPO are not configured on the server');
 
@@ -1138,6 +1155,7 @@ async function addRepoIfNew(repoKey) {
   repos.sort();
   try {
     await commitFileToGitHub('repos.json', repos, `repos: add ${repoKey}`);
+    writeLocalFile('repos.json', repos);
     console.log(`New repo discovered and saved: ${repoKey}`);
   } catch (err) {
     console.error(`Failed to commit repos.json for ${repoKey}:`, err.message);
@@ -1637,6 +1655,7 @@ app.post('/register', async (req, res) => {
     // Commit to GitHub to persist across deploys
     try {
       await commitFileToGitHub('users.json', updatedUsers, `register: add ${name}`);
+      writeLocalFile('users.json', updatedUsers);
     } catch (err) {
       console.error('Failed to commit users.json to GitHub:', err.message);
       return res.status(500).json({ error: 'Registered locally but failed to save permanently. Ask an admin to check the server logs.' });
@@ -1672,6 +1691,7 @@ app.post('/unregister', async (req, res) => {
 
     try {
       await commitFileToGitHub('users.json', updatedUsers, `unregister: remove ${removedUser.name}`);
+      writeLocalFile('users.json', updatedUsers);
     } catch (err) {
       console.error('Failed to commit users.json to GitHub:', err.message);
       return res.status(500).json({ error: 'Failed to save changes. Ask an admin to check the server logs.' });
@@ -1747,6 +1767,7 @@ app.post('/edit', async (req, res) => {
 
     try {
       await commitFileToGitHub('users.json', updatedUsers, `edit: update ${updatedUser.name}`);
+      writeLocalFile('users.json', updatedUsers);
     } catch (err) {
       console.error('Failed to commit users.json to GitHub:', err.message);
       return res.status(500).json({ error: 'Updated locally but failed to save permanently. Ask an admin to check the server logs.' });
@@ -1762,39 +1783,44 @@ app.post('/edit', async (req, res) => {
 
 // Unified webhook handler
 async function handleWebhook(req, res) {
-  const isGitLab = req.headers['x-gitlab-event'] || req.headers[GITLAB_TOKEN_HEADER] || _.has(req.body, 'object_kind');
-  const source = isGitLab ? 'gitlab' : 'github';
+  try {
+    const isGitLab = req.headers['x-gitlab-event'] || req.headers[GITLAB_TOKEN_HEADER] || _.has(req.body, 'object_kind');
+    const source = isGitLab ? 'gitlab' : 'github';
 
-  if (source === 'gitlab') {
-    const objectKind = _.get(req.body, 'object_kind', 'unknown');
-    console.log(`Received GitLab webhook: object_kind=${objectKind}`);
+    if (source === 'gitlab') {
+      const objectKind = _.get(req.body, 'object_kind', 'unknown');
+      console.log(`Received GitLab webhook: object_kind=${objectKind}`);
 
-    const repoName = _.get(req.body, 'project.path_with_namespace', '');
-    if (repoName) addRepoIfNew(`gitlab:${repoName}`);
+      const repoName = _.get(req.body, 'project.path_with_namespace', '');
+      if (repoName) addRepoIfNew(`gitlab:${repoName}`);
 
-    const token = req.headers[GITLAB_TOKEN_HEADER];
-    if (!verifyGitLabToken(token)) {
-      console.error('Invalid GitLab token');
-      return res.status(401).json({ error: 'Invalid token' });
+      const token = req.headers[GITLAB_TOKEN_HEADER];
+      if (!verifyGitLabToken(token)) {
+        console.error('Invalid GitLab token');
+        return res.status(401).json({ error: 'Invalid token' });
+      }
+
+      const result = await processWebhook('gitlab', req.body);
+      return res.json(result);
     }
 
-    const result = await processWebhook('gitlab', req.body);
+    console.log('Received GitHub webhook');
+
+    const repoName = _.get(req.body, 'repository.full_name', '');
+    if (repoName) addRepoIfNew(`github:${repoName}`);
+
+    const signature = req.headers[GITHUB_SIGNATURE_HEADER];
+    if (!verifyGitHubSignature(req.body, signature)) {
+      console.error('Invalid GitHub signature');
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+
+    const result = await processWebhook('github', req.body, signature);
     return res.json(result);
+  } catch (err) {
+    console.error('Webhook handler error:', err);
+    return res.status(500).json({ error: 'Internal server error' });
   }
-
-  console.log('Received GitHub webhook');
-
-  const repoName = _.get(req.body, 'repository.full_name', '');
-  if (repoName) addRepoIfNew(`github:${repoName}`);
-
-  const signature = req.headers[GITHUB_SIGNATURE_HEADER];
-  if (!verifyGitHubSignature(req.body, signature)) {
-    console.error('Invalid GitHub signature');
-    return res.status(401).json({ error: 'Invalid signature' });
-  }
-
-  const result = await processWebhook('github', req.body, signature);
-  return res.json(result);
 }
 
 // Single webhook endpoint — auto-detects GitHub vs GitLab
