@@ -52,6 +52,14 @@
     }
   },
   {
+    "name": "@gus.argueta",
+    "teamsWebhookUrl": "https://git-comments-to-teams.onrender.com/webhook/gitlab",
+    "gitlab": {
+      "username": "@gus.argueta",
+      "userId": 21715
+    }
+  },
+  {
     "name": "gus.argueta",
     "teamsWebhookUrl": "https://git-comments-to-teams.onrender.com/webhook/gitlab",
     "gitlab": {
