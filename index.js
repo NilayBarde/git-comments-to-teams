@@ -3,35 +3,46 @@ require('dotenv').config(); // Load .env file for local development
 const express = require('express');
 const crypto = require('crypto');
 const fetch = require('node-fetch');
+const fs = require('fs');
+const path = require('path');
 const _ = require('lodash');
 
 // Load configuration from environment variables
 const config = {
   port: process.env.PORT || 3000,
   github: {
-    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET
+    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
+    token: process.env.GITHUB_TOKEN,
+    repo: process.env.GITHUB_REPO
   },
   gitlab: {
-    webhookToken: process.env.GITLAB_WEBHOOK_TOKEN
+    webhookToken: process.env.GITLAB_WEBHOOK_TOKEN,
+    apiToken: process.env.GITLAB_API_TOKEN,
+    apiUrl: process.env.GITLAB_API_URL || 'https://gitlab.com'
   }
 };
 
-// Parse USERS_CONFIG from environment variable
+// Load users from users.json (primary) or USERS_CONFIG env var (fallback)
+const USERS_FILE = path.join(__dirname, 'users.json');
 let users = [];
 try {
-  const usersConfigStr = process.env.USERS_CONFIG;
-  if (!usersConfigStr) {
-    console.error('Error: USERS_CONFIG environment variable is required');
-    console.error('See README.md for the expected format');
+  if (fs.existsSync(USERS_FILE)) {
+    users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+    console.log(`Loaded ${users.length} users from users.json`);
+  } else if (process.env.USERS_CONFIG) {
+    users = JSON.parse(process.env.USERS_CONFIG);
+    console.log(`Loaded ${users.length} users from USERS_CONFIG env var`);
+  } else {
+    console.error('Error: No user config found (users.json or USERS_CONFIG env var)');
+    console.error('See README.md or visit /register to add users');
     process.exit(1);
   }
-  users = JSON.parse(usersConfigStr);
   if (!Array.isArray(users) || users.length === 0) {
-    console.error('Error: USERS_CONFIG must be a non-empty JSON array');
+    console.error('Error: User config must be a non-empty JSON array');
     process.exit(1);
   }
 } catch (error) {
-  console.error('Error parsing USERS_CONFIG:', error.message);
+  console.error('Error loading user config:', error.message);
   process.exit(1);
 }
 
@@ -1064,6 +1075,285 @@ async function processWebhook(source, data, signature) {
   return { processed: true, notifications: results };
 }
 
+// ── Registration helpers ──
+
+async function lookupGitLabUserId(username) {
+  const { apiUrl, apiToken } = config.gitlab;
+  if (!apiToken) throw new Error('GITLAB_API_TOKEN is not configured on the server');
+
+  const response = await fetch(
+    `${apiUrl}/api/v4/users?username=${encodeURIComponent(username)}`,
+    { headers: { 'PRIVATE-TOKEN': apiToken } }
+  );
+
+  if (!response.ok) throw new Error(`GitLab API returned ${response.status}`);
+
+  const results = await response.json();
+  if (results.length === 0) throw new Error(`GitLab user "${username}" not found`);
+
+  return results[0].id;
+}
+
+async function commitUsersToGitHub(updatedUsers, newUserName) {
+  const { token, repo } = config.github;
+  if (!token || !repo) throw new Error('GITHUB_TOKEN and GITHUB_REPO are not configured on the server');
+
+  const apiUrl = `https://api.github.com/repos/${repo}/contents/users.json`;
+  const headers = {
+    'Authorization': `token ${token}`,
+    'Accept': 'application/vnd.github.v3+json',
+    'Content-Type': 'application/json'
+  };
+
+  let sha;
+  const getResponse = await fetch(apiUrl, { headers });
+  if (getResponse.ok) {
+    const data = await getResponse.json();
+    sha = data.sha;
+  }
+
+  const content = Buffer.from(JSON.stringify(updatedUsers, null, 2) + '\n').toString('base64');
+  const body = {
+    message: `register: add ${newUserName}`,
+    content,
+    ...(sha ? { sha } : {})
+  };
+
+  const putResponse = await fetch(apiUrl, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify(body)
+  });
+
+  if (!putResponse.ok) {
+    const text = await putResponse.text();
+    throw new Error(`GitHub API returned ${putResponse.status}: ${text}`);
+  }
+}
+
+function getRegistrationPage() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PR Comment Notifier — Sign Up</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f6f8; color: #1a1a2e; min-height: 100vh; display: flex; justify-content: center; padding: 2rem 1rem; }
+  .container { max-width: 540px; width: 100%; }
+  h1 { font-size: 1.5rem; margin-bottom: .25rem; }
+  .subtitle { color: #555; margin-bottom: 1.5rem; font-size: .95rem; }
+  .card { background: #fff; border-radius: 12px; padding: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 1.25rem; }
+  .card h2 { font-size: 1.05rem; margin-bottom: .75rem; }
+  details summary { cursor: pointer; font-weight: 600; font-size: .95rem; padding: .5rem 0; }
+  details[open] summary { margin-bottom: .5rem; }
+  .steps { padding-left: 1.25rem; }
+  .steps li { margin-bottom: .5rem; line-height: 1.5; font-size: .9rem; color: #333; }
+  label { display: block; font-weight: 600; font-size: .85rem; margin-bottom: .35rem; color: #333; }
+  .hint { font-size: .8rem; color: #777; margin-bottom: .5rem; }
+  input[type="text"], input[type="url"] { width: 100%; padding: .6rem .75rem; border: 1px solid #d0d0d0; border-radius: 8px; font-size: .9rem; transition: border-color .15s; }
+  input:focus { outline: none; border-color: #4f6ef7; box-shadow: 0 0 0 3px rgba(79,110,247,.12); }
+  .field { margin-bottom: 1rem; }
+  .field:last-child { margin-bottom: 0; }
+  button { width: 100%; padding: .7rem; background: #4f6ef7; color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: background .15s; }
+  button:hover { background: #3b5de7; }
+  button:disabled { background: #a0b0f0; cursor: not-allowed; }
+  .msg { margin-top: 1rem; padding: .75rem 1rem; border-radius: 8px; font-size: .9rem; line-height: 1.5; }
+  .msg.success { background: #e6f9ed; color: #1a7a3a; }
+  .msg.error { background: #fde8e8; color: #b91c1c; }
+  .optional-tag { font-weight: 400; color: #999; font-size: .8rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>PR Comment Notifier</h1>
+  <p class="subtitle">Sign up to get Teams notifications for comments, reviews, merges, and pipeline events on your MRs/PRs.</p>
+
+  <div class="card">
+    <details>
+      <summary>How to create your Teams Webhook URL</summary>
+      <ol class="steps">
+        <li>Open <strong>Microsoft Teams</strong></li>
+        <li>Create a private Team &amp; Channel for your notifications (or use an existing one)</li>
+        <li>Click <strong>Apps</strong> (left sidebar) → search <strong>Workflows</strong></li>
+        <li>Click the <strong>Create</strong> tab</li>
+        <li>Search for "<strong>Send webhook alerts to a channel</strong>" and select it</li>
+        <li>Choose your Team and Channel, give it a name (e.g. "PR Notifications")</li>
+        <li>After saving, copy the <strong>HTTP POST URL</strong> — that's your webhook URL</li>
+      </ol>
+    </details>
+  </div>
+
+  <form id="regForm" class="card">
+    <h2>Your Details</h2>
+
+    <div class="field">
+      <label for="name">Name</label>
+      <input type="text" id="name" name="name" placeholder="e.g. nilay" required>
+    </div>
+
+    <div class="field">
+      <label for="teamsWebhookUrl">Teams Webhook URL</label>
+      <div class="hint">The URL you copied from the Workflows step above</div>
+      <input type="url" id="teamsWebhookUrl" name="teamsWebhookUrl" placeholder="https://..." required>
+    </div>
+
+    <div class="field">
+      <label for="gitlabUsername">GitLab Username <span class="optional-tag">optional</span></label>
+      <div class="hint">Your GitLab user ID will be looked up automatically</div>
+      <input type="text" id="gitlabUsername" name="gitlabUsername" placeholder="e.g. Nilay.Barde">
+    </div>
+
+    <div class="field">
+      <label for="githubUsername">GitHub Username <span class="optional-tag">optional</span></label>
+      <input type="text" id="githubUsername" name="githubUsername" placeholder="e.g. NilayBarde">
+    </div>
+
+    <div class="field">
+      <label for="mentionAliases">Mention Aliases <span class="optional-tag">optional, comma-separated</span></label>
+      <div class="hint">Team aliases you want to be notified for, e.g. @espn-core-web</div>
+      <input type="text" id="mentionAliases" name="mentionAliases" placeholder="e.g. espn-core-web, bet-squad">
+    </div>
+
+    <button type="submit" id="submitBtn">Sign Up</button>
+    <div id="msg"></div>
+  </form>
+</div>
+
+<script>
+document.getElementById('regForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('submitBtn');
+  const msg = document.getElementById('msg');
+  btn.disabled = true;
+  btn.textContent = 'Registering…';
+  msg.className = 'msg';
+  msg.textContent = '';
+
+  const aliases = document.getElementById('mentionAliases').value
+    .split(',').map(s => s.trim()).filter(Boolean);
+
+  try {
+    const res = await fetch('/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: document.getElementById('name').value.trim(),
+        teamsWebhookUrl: document.getElementById('teamsWebhookUrl').value.trim(),
+        gitlabUsername: document.getElementById('gitlabUsername').value.trim(),
+        githubUsername: document.getElementById('githubUsername').value.trim(),
+        mentionAliases: aliases
+      })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      msg.className = 'msg success';
+      msg.textContent = data.message;
+      btn.textContent = 'Done!';
+    } else {
+      throw new Error(data.error || 'Registration failed');
+    }
+  } catch (err) {
+    msg.className = 'msg error';
+    msg.textContent = err.message;
+    btn.disabled = false;
+    btn.textContent = 'Sign Up';
+  }
+});
+</script>
+</body>
+</html>`;
+}
+
+// ── Routes ──
+
+app.get('/register', (req, res) => {
+  res.send(getRegistrationPage());
+});
+
+app.post('/register', async (req, res) => {
+  try {
+    const { name, teamsWebhookUrl, gitlabUsername, githubUsername, mentionAliases } = req.body;
+
+    if (!name || !teamsWebhookUrl) {
+      return res.status(400).json({ error: 'Name and Teams Webhook URL are required' });
+    }
+
+    const nameLower = name.toLowerCase().trim();
+    const isDuplicate = users.some(u => u.name.toLowerCase() === nameLower);
+    if (isDuplicate) {
+      return res.status(409).json({ error: `User "${name}" is already registered` });
+    }
+
+    // Build user object
+    const newUser = { name: nameLower, teamsWebhookUrl };
+
+    if (gitlabUsername) {
+      try {
+        const userId = await lookupGitLabUserId(gitlabUsername);
+        newUser.gitlab = { username: gitlabUsername, userId };
+      } catch (err) {
+        return res.status(400).json({ error: `GitLab lookup failed: ${err.message}` });
+      }
+    }
+
+    if (githubUsername) {
+      newUser.github = { username: githubUsername };
+    }
+
+    if (mentionAliases && mentionAliases.length > 0) {
+      newUser.mentionAliases = mentionAliases;
+    }
+
+    // Validate webhook by sending a test notification
+    const testCard = {
+      type: 'message',
+      attachments: [{
+        contentType: 'application/vnd.microsoft.card.adaptive',
+        content: {
+          type: 'AdaptiveCard',
+          version: '1.4',
+          body: [{
+            type: 'TextBlock',
+            text: '✅ PR Comment Notifier is connected!',
+            weight: 'Bolder',
+            size: 'Medium',
+            color: 'Good'
+          }, {
+            type: 'TextBlock',
+            text: `Hi ${name}! Your notifications are set up. You'll start receiving alerts for comments, reviews, merges, and pipeline events.`,
+            wrap: true
+          }]
+        }
+      }]
+    };
+
+    const webhookValid = await sendToTeams(testCard, teamsWebhookUrl);
+    if (!webhookValid) {
+      return res.status(400).json({ error: 'Could not send to that Teams webhook URL. Please check it and try again.' });
+    }
+
+    // Add to in-memory list (works immediately, no restart needed)
+    const updatedUsers = [...users, newUser];
+    users.push(newUser);
+
+    // Commit to GitHub to persist across deploys
+    try {
+      await commitUsersToGitHub(updatedUsers, nameLower);
+    } catch (err) {
+      console.error('Failed to commit users.json to GitHub:', err.message);
+      return res.status(500).json({ error: 'Registered locally but failed to save permanently. Ask an admin to check the server logs.' });
+    }
+
+    console.log(`New user registered: ${nameLower}`);
+    res.json({ message: `Welcome, ${name}! You're all set. A test notification was sent to your Teams channel. The server will redeploy in about a minute to make it permanent.` });
+  } catch (err) {
+    console.error('Registration error:', err);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
+
 // GitHub webhook endpoint
 app.post('/webhook/github', async (req, res) => {
   console.log('Received GitHub webhook');
@@ -1109,6 +1399,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
+    users: users.map(u => u.name),
     repos: {
       configured: configuredRepos.length,
       discovered: newRepos.length,
@@ -1123,6 +1414,7 @@ app.get('/health', (req, res) => {
 const port = _.get(config, 'port', 3000);
 app.listen(port, () => {
   console.log(`PR Comment Notifier running on port ${port}`);
+  console.log(`Register: http://localhost:${port}/register`);
   console.log(`GitHub webhook URL: http://localhost:${port}/webhook/github`);
   console.log(`GitLab webhook URL: http://localhost:${port}/webhook/gitlab`);
   console.log(`Health check: http://localhost:${port}/health`);

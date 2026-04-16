@@ -1,0 +1,32 @@
+[
+  {
+    "name": "nilay",
+    "teamsWebhookUrl": "https://default56b731a8a2ac4c32bf6b616810e913.c6.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/70b8d692df814299a0a9e65f6286c8ac/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=7Wu-rhbdo1GwNeEskc8PPD3WweaoaVETOtVIE15W2hs",
+    "github": {
+      "username": "NILAY-BARDE"
+    },
+    "gitlab": {
+      "username": "Nilay.Barde",
+      "userId": 10957
+    },
+    "mentionAliases": [
+      "espn-fitt-betting-team"
+    ]
+  },
+  {
+    "name": "ryan",
+    "teamsWebhookUrl": "https://default56b731a8a2ac4c32bf6b616810e913.c6.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/69183ac9c77f4443b9502db40d7447b0/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=i35bL4S2yDOPJt-61MVVMFBo_8Ieduu9NFnWyEHosng",
+    "gitlab": {
+      "username": "Ryan.Kawahara",
+      "userId": 30126
+    }
+  },
+  {
+    "name": "muskan",
+    "teamsWebhookUrl": "https://default56b731a8a2ac4c32bf6b616810e913.c6.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/17bcd369093f4cca99546d79ed7b0617/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=_5RfQeODrdhGCfVexsUMgmeSX7IXwzKI1s6QbARHZ_0",
+    "gitlab": {
+      "username": "Muskan.Vyas",
+      "userId": 33362
+    }
+  }
+]
