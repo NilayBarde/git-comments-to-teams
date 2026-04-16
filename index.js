@@ -1094,7 +1094,7 @@ async function lookupGitLabUserId(username) {
   return results[0].id;
 }
 
-async function commitUsersToGitHub(updatedUsers, newUserName) {
+async function commitUsersToGitHub(updatedUsers, commitMessage) {
   const { token, repo } = config.github;
   if (!token || !repo) throw new Error('GITHUB_TOKEN and GITHUB_REPO are not configured on the server');
 
@@ -1114,7 +1114,7 @@ async function commitUsersToGitHub(updatedUsers, newUserName) {
 
   const content = Buffer.from(JSON.stringify(updatedUsers, null, 2) + '\n').toString('base64');
   const body = {
-    message: `register: add ${newUserName}`,
+    message: commitMessage,
     content,
     ...(sha ? { sha } : {})
   };
@@ -1266,6 +1266,82 @@ document.getElementById('regForm').addEventListener('submit', async (e) => {
 </html>`;
 }
 
+function getUnregisterPage() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PR Comment Notifier — Unsubscribe</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f6f8; color: #1a1a2e; min-height: 100vh; display: flex; justify-content: center; padding: 2rem 1rem; }
+  .container { max-width: 540px; width: 100%; }
+  h1 { font-size: 1.5rem; margin-bottom: .25rem; }
+  .subtitle { color: #555; margin-bottom: 1.5rem; font-size: .95rem; }
+  .card { background: #fff; border-radius: 12px; padding: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  label { display: block; font-weight: 600; font-size: .85rem; margin-bottom: .35rem; color: #333; }
+  .hint { font-size: .8rem; color: #777; margin-bottom: .5rem; }
+  input[type="text"] { width: 100%; padding: .6rem .75rem; border: 1px solid #d0d0d0; border-radius: 8px; font-size: .9rem; transition: border-color .15s; }
+  input:focus { outline: none; border-color: #e45; box-shadow: 0 0 0 3px rgba(228,68,85,.12); }
+  .field { margin-bottom: 1rem; }
+  button { width: 100%; padding: .7rem; background: #e44; color: #fff; border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: background .15s; }
+  button:hover { background: #c33; }
+  button:disabled { background: #e9a; cursor: not-allowed; }
+  .msg { margin-top: 1rem; padding: .75rem 1rem; border-radius: 8px; font-size: .9rem; line-height: 1.5; }
+  .msg.success { background: #e6f9ed; color: #1a7a3a; }
+  .msg.error { background: #fde8e8; color: #b91c1c; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Unsubscribe</h1>
+  <p class="subtitle">Remove yourself from PR Comment Notifier. You'll stop receiving Teams notifications.</p>
+  <form id="unregForm" class="card">
+    <div class="field">
+      <label for="name">Your Name</label>
+      <div class="hint">The name you registered with (e.g. nilay, ryan)</div>
+      <input type="text" id="name" name="name" placeholder="e.g. nilay" required>
+    </div>
+    <button type="submit" id="submitBtn">Unsubscribe</button>
+    <div id="msg"></div>
+  </form>
+</div>
+<script>
+document.getElementById('unregForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('submitBtn');
+  const msg = document.getElementById('msg');
+  btn.disabled = true;
+  btn.textContent = 'Removing…';
+  msg.className = 'msg';
+  msg.textContent = '';
+  try {
+    const res = await fetch('/unregister', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: document.getElementById('name').value.trim() })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      msg.className = 'msg success';
+      msg.textContent = data.message;
+      btn.textContent = 'Done';
+    } else {
+      throw new Error(data.error || 'Failed to unsubscribe');
+    }
+  } catch (err) {
+    msg.className = 'msg error';
+    msg.textContent = err.message;
+    btn.disabled = false;
+    btn.textContent = 'Unsubscribe';
+  }
+});
+</script>
+</body>
+</html>`;
+}
+
 // ── Routes ──
 
 app.get('/register', (req, res) => {
@@ -1340,7 +1416,7 @@ app.post('/register', async (req, res) => {
 
     // Commit to GitHub to persist across deploys
     try {
-      await commitUsersToGitHub(updatedUsers, nameLower);
+      await commitUsersToGitHub(updatedUsers, `register: add ${nameLower}`);
     } catch (err) {
       console.error('Failed to commit users.json to GitHub:', err.message);
       return res.status(500).json({ error: 'Registered locally but failed to save permanently. Ask an admin to check the server logs.' });
@@ -1350,6 +1426,41 @@ app.post('/register', async (req, res) => {
     res.json({ message: `Welcome, ${name}! You're all set. A test notification was sent to your Teams channel. The server will redeploy in about a minute to make it permanent.` });
   } catch (err) {
     console.error('Registration error:', err);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
+
+app.get('/unregister', (req, res) => {
+  res.send(getUnregisterPage());
+});
+
+app.post('/unregister', async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+
+    const nameLower = name.toLowerCase().trim();
+    const userIndex = users.findIndex(u => u.name.toLowerCase() === nameLower);
+    if (userIndex === -1) {
+      return res.status(404).json({ error: `User "${name}" not found` });
+    }
+
+    const updatedUsers = users.filter((_, i) => i !== userIndex);
+
+    try {
+      await commitUsersToGitHub(updatedUsers, `unregister: remove ${nameLower}`);
+    } catch (err) {
+      console.error('Failed to commit users.json to GitHub:', err.message);
+      return res.status(500).json({ error: 'Failed to save changes. Ask an admin to check the server logs.' });
+    }
+
+    users.splice(userIndex, 1);
+    console.log(`User unregistered: ${nameLower}`);
+    res.json({ message: `${name} has been removed. You'll stop receiving notifications shortly.` });
+  } catch (err) {
+    console.error('Unregister error:', err);
     res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 });
