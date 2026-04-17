@@ -92,7 +92,7 @@ const ALWAYS_IGNORED_BOT_PATTERNS = [
 const NOTIFICATION_DEFAULTS = {
   comments: true, mentions: true, approvals: true,
   merges: true, pipelineFailures: true, pipelineRecoveries: true,
-  reviewRequests: true,
+  reviewRequests: true, codeownerReviewRequests: true,
   sonarComments: false, aiReviewComments: false,
   selfComments: false, selfMerges: false,
   selfReviewRequests: false
@@ -207,6 +207,18 @@ function classifyBotComment(username) {
   if (PROJECT_BOT_PATTERN.test(username)) return 'projectBot';
   if (ALWAYS_IGNORED_BOT_PATTERNS.some(p => p.test(username))) return 'bot';
   return null;
+}
+
+function isCodeownerBot(username) {
+  if (!username) return false;
+  return /^group_\d+_bot_/i.test(username) || /^project_\d+_bot_/i.test(username);
+}
+
+function humanizeRequester(username) {
+  if (!username) return 'Unknown';
+  if (isCodeownerBot(username)) return 'CODEOWNERS';
+  if (/\[bot\]$/i.test(username)) return username.replace(/\[bot\]$/i, ' (bot)');
+  return username;
 }
 
 function userWantsNotification(user, type) {
@@ -923,6 +935,7 @@ function createReviewRequestedCard(data) {
   const { source, prTitle, prUrl, requestedBy, repoName } = data;
   const sourceLabel = source === 'github' ? 'GitHub' : 'GitLab';
   const prLabel = source === 'github' ? 'PR' : 'MR';
+  const displayRequester = humanizeRequester(requestedBy);
 
   return {
     type: 'message',
@@ -936,7 +949,7 @@ function createReviewRequestedCard(data) {
         body: [
           {
             type: 'TextBlock',
-            text: `👀 ${requestedBy} requested your review`,
+            text: `👀 ${displayRequester} requested your review`,
             weight: 'Bolder',
             size: 'Medium',
             color: 'Accent'
@@ -947,7 +960,7 @@ function createReviewRequestedCard(data) {
               { title: 'Source:', value: sourceLabel },
               { title: 'Repository:', value: repoName },
               { title: `${prLabel}:`, value: prTitle },
-              { title: 'Requested by:', value: requestedBy }
+              { title: 'Requested by:', value: displayRequester }
             ]
           }
         ],
@@ -1197,11 +1210,16 @@ async function processWebhook(source, data, signature) {
 
   if (reviewRequestedEvent) {
     const { requestedBy, reviewers } = reviewRequestedEvent;
+    const isCodeowner = isCodeownerBot(requestedBy);
     const notifications = [];
 
     for (const reviewerUsername of reviewers) {
       const reviewer = findUserByUsername(source, reviewerUsername);
       if (!reviewer) continue;
+      if (isCodeowner && !userWantsNotification(reviewer, 'codeownerReviewRequests')) {
+        console.log(`Skipping CODEOWNERS review-request notification for ${reviewer.name} (disabled by preferences)`);
+        continue;
+      }
       const isSelfRequest = isCommentAuthor(reviewer, source, requestedBy);
       if (isSelfRequest && !userWantsNotification(reviewer, 'selfReviewRequests')) continue;
       if (!userWantsNotification(reviewer, 'reviewRequests')) {
@@ -1367,6 +1385,7 @@ const NOTIF_CHECKBOXES_HTML = `
       <label class="toggle"><input type="checkbox" id="notif-pipelineFailures" checked> Pipeline failures</label>
       <label class="toggle"><input type="checkbox" id="notif-pipelineRecoveries" checked> Pipeline recovered (fixed after failure)</label>
       <label class="toggle"><input type="checkbox" id="notif-reviewRequests" checked> Review requests</label>
+      <label class="toggle"><input type="checkbox" id="notif-codeownerReviewRequests" checked> CODEOWNERS auto-assigned review requests</label>
       <hr style="margin:.75rem 0;border:none;border-top:1px solid #e0e0e0">
       <div class="hint">Bot comments (off by default)</div>
       <label class="toggle"><input type="checkbox" id="notif-sonarComments"> SonarQube analysis comments</label>
@@ -1386,6 +1405,7 @@ const NOTIF_COLLECT_JS = `{
           pipelineFailures: document.getElementById('notif-pipelineFailures').checked,
           pipelineRecoveries: document.getElementById('notif-pipelineRecoveries').checked,
           reviewRequests: document.getElementById('notif-reviewRequests').checked,
+          codeownerReviewRequests: document.getElementById('notif-codeownerReviewRequests').checked,
           sonarComments: document.getElementById('notif-sonarComments').checked,
           aiReviewComments: document.getElementById('notif-aiReviewComments').checked,
           selfComments: document.getElementById('notif-selfComments').checked,
@@ -1742,6 +1762,7 @@ async function lookupUser() {
     document.getElementById('notif-pipelineFailures').checked = notifs.pipelineFailures !== false;
     document.getElementById('notif-pipelineRecoveries').checked = notifs.pipelineRecoveries !== false;
     document.getElementById('notif-reviewRequests').checked = notifs.reviewRequests !== false;
+    document.getElementById('notif-codeownerReviewRequests').checked = notifs.codeownerReviewRequests !== false;
     document.getElementById('notif-sonarComments').checked = notifs.sonarComments === true;
     document.getElementById('notif-aiReviewComments').checked = notifs.aiReviewComments === true;
     document.getElementById('notif-selfComments').checked = notifs.selfComments === true;
