@@ -10,8 +10,10 @@ A self-hosted webhook server that receives GitHub PR and GitLab MR events and po
 - **MR/PR Merged** — Get notified when your merge request is merged
 - **Approvals & Changes Requested** — Get notified on PR reviews
 - **Review Requests** — Get notified when you're assigned as a reviewer
-- **Pipeline Failures & Successes** — Get notified when a pipeline fails or passes on your GitLab MR
-- **Per-User Notification Preferences** — Toggle each notification type on/off from the settings page
+- **Pipeline Failures** — Get notified when a pipeline fails on your GitLab MR (deduplicated — same failures won't spam you)
+- **Pipeline Recovery** — Get notified when a previously failing pipeline is fixed
+- **CODEOWNERS Review Requests** — Auto-assigned review requests show "CODEOWNERS" instead of bot usernames
+- **Per-User Notification Preferences** — Toggle each notification type on/off from the settings page, linked from every card
 - **Bot Comment Control** — Opt-in to SonarQube and project bot comment notifications (off by default)
 - **Self-Activity Toggles** — Optionally receive notifications for your own comments, merges, and self-assigned reviews
 - **Self-Service Registration** — Users register, edit settings, and unregister via web UI
@@ -88,15 +90,26 @@ Configure webhooks in your GitLab/GitHub repos to point to your Render URL. You 
 | **Changes Requested** | A reviewer requests changes on YOUR MR/PR | On |
 | **Merged** | YOUR MR/PR gets merged | On |
 | **Review Requested** | You're assigned as a reviewer on an MR/PR | On |
-| **Pipeline Failed** | A pipeline fails on YOUR GitLab MR | On |
-| **Pipeline Passed** | A pipeline succeeds on YOUR GitLab MR | On |
+| **Pipeline Failed** | A pipeline fails on YOUR GitLab MR (deduplicated — same jobs failing won't re-notify) | On |
+| **Pipeline Recovered** | A previously failing pipeline passes on YOUR GitLab MR | On |
+| **CODEOWNERS Reviews** | You're auto-assigned as a reviewer by CODEOWNERS | On |
 | **SonarQube Comments** | SonarQube analysis posts a comment on your MR | Off |
 | **Project Bot Comments** | AI review / project bot posts a comment on your MR | Off |
 | **Self-Comments** | Your own comments on your PRs/MRs | Off |
 | **Self-Merges** | When you merge your own PRs/MRs | Off |
 | **Self-Review Requests** | When you add yourself as a reviewer | Off |
 
-All preferences are configurable per user from the **Edit Settings** page.
+All preferences are configurable per user from the **Edit Settings** page. Every notification card includes a "Notifications" button linking to the settings page.
+
+### Pipeline Deduplication
+
+Pipeline notifications are smart about avoiding spam:
+
+- **Duplicate failures suppressed** — If the same jobs keep failing on a branch, you only get notified once. Push a fix that breaks different jobs? You'll get a new notification.
+- **Recovery detection** — When a previously failing pipeline goes green, you get a "Pipeline Fixed!" notification.
+- **Consecutive passes ignored** — Green pipeline stays green? No notification.
+- **State persisted** — Pipeline state is tracked in `pipeline-state.json` and survives server restarts.
+- **Auto-cleanup** — State is cleared when an MR is merged, when a pipeline recovers, or after 30 days of inactivity.
 
 ---
 
@@ -142,8 +155,10 @@ The optional `notifications` object controls which events trigger notifications.
     "mentions": true,
     "approvals": true,
     "merges": true,
-    "pipelines": true,
+    "pipelineFailures": true,
+    "pipelineRecoveries": true,
     "reviewRequests": true,
+    "codeownerReviewRequests": true,
     "sonarComments": false,
     "aiReviewComments": false,
     "selfComments": false,
@@ -280,12 +295,13 @@ docker build -t pr-comment-notifier .
 docker run -p 3000:3000 --env-file .env pr-comment-notifier
 ```
 
-For persistent local storage, mount a volume for the config files:
+For persistent local storage, mount a volume for the data files:
 
 ```bash
 docker run -p 3000:3000 --env-file .env \
   -v $(pwd)/users.json:/app/users.json \
   -v $(pwd)/repos.json:/app/repos.json \
+  -v $(pwd)/pipeline-state.json:/app/pipeline-state.json \
   pr-comment-notifier
 ```
 
