@@ -1,19 +1,20 @@
 {
   "name": "pr-comment-notifier",
   "version": "1.0.0",
+  "type": "module",
   "description": "Webhook server that receives GitHub/GitLab PR/MR comments and posts to Microsoft Teams",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "dotenv": "^17.2.3",
     "express": "^4.18.2",
-    "lodash": "^4.17.21",
-    "node-fetch": "^2.7.0"
+    "lodash": "^4.17.21"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": ">=18.0.0"
   }
 }

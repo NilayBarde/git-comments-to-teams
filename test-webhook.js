@@ -5,8 +5,6 @@
  * Usage: node test-webhook.js [github|gitlab]
  */
 
-const fetch = require('node-fetch');
-
 const BASE_URL = 'http://localhost:3000';
 
 // Sample GitHub PR comment payload

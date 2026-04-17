@@ -1,40 +1,21 @@
-require('dotenv').config(); // Load .env file for local development
+import 'dotenv/config';
+import express from 'express';
+import crypto from 'crypto';
+import _ from 'lodash';
+import { loadFile, persistFile } from './persistence.js';
 
-const express = require('express');
-const crypto = require('crypto');
-const fetch = require('node-fetch');
-const fs = require('fs');
-const path = require('path');
-const _ = require('lodash');
+const GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET;
+const GITLAB_WEBHOOK_TOKEN = process.env.GITLAB_WEBHOOK_TOKEN;
 
-// Load configuration from environment variables
-const config = {
-  port: process.env.PORT || 3000,
-  github: {
-    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
-    token: process.env.GITHUB_TOKEN,
-    repo: process.env.GITHUB_REPO
-  },
-  gitlab: {
-    webhookToken: process.env.GITLAB_WEBHOOK_TOKEN
-  }
-};
-
-// Load users from users.json (primary) or USERS_CONFIG env var (fallback)
-const USERS_FILE = path.join(__dirname, 'users.json');
 let users = [];
 try {
-  if (fs.existsSync(USERS_FILE)) {
-    users = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
-    console.log(`Loaded ${users.length} users from users.json`);
-  } else if (process.env.USERS_CONFIG) {
-    users = JSON.parse(process.env.USERS_CONFIG);
-    console.log(`Loaded ${users.length} users from USERS_CONFIG env var`);
-  } else {
+  users = loadFile('users.json') || (process.env.USERS_CONFIG ? JSON.parse(process.env.USERS_CONFIG) : null);
+  if (!users) {
     console.error('Error: No user config found (users.json or USERS_CONFIG env var)');
     console.error('See README.md or visit /register to add users');
     process.exit(1);
   }
+  console.log(`Loaded ${users.length} users`);
   if (!Array.isArray(users) || users.length === 0) {
     console.error('Error: User config must be a non-empty JSON array');
     process.exit(1);
@@ -56,14 +37,10 @@ users.forEach((user, index) => {
   }
 });
 
-// Load repos from repos.json
-const REPOS_FILE = path.join(__dirname, 'repos.json');
 let repos = [];
 try {
-  if (fs.existsSync(REPOS_FILE)) {
-    repos = JSON.parse(fs.readFileSync(REPOS_FILE, 'utf8'));
-    console.log(`Loaded ${repos.length} repos from repos.json`);
-  }
+  repos = loadFile('repos.json') || [];
+  if (repos.length) console.log(`Loaded ${repos.length} repos`);
 } catch (error) {
   console.error('Error loading repos.json:', error.message);
 }
@@ -150,7 +127,7 @@ app.use(express.json());
  * Verify GitHub webhook signature
  */
 function verifyGitHubSignature(payload, signature) {
-  const secret = _.get(config, 'github.webhookSecret');
+  const secret = GITHUB_WEBHOOK_SECRET;
   if (!secret) return true;
 
   if (!signature) return false;
@@ -167,7 +144,7 @@ function verifyGitHubSignature(payload, signature) {
  * Verify GitLab webhook token
  */
 function verifyGitLabToken(token) {
-  const configuredToken = _.get(config, 'gitlab.webhookToken');
+  const configuredToken = GITLAB_WEBHOOK_TOKEN;
   if (!configuredToken) return true; // Skip verification if no token configured
   return token === configuredToken;
 }
@@ -1289,70 +1266,15 @@ async function processWebhook(source, data, signature) {
 
 // ── Registration helpers ──
 
-let commitQueue = Promise.resolve();
-
-function commitFileToGitHub(filePath, data, commitMessage) {
-  const pending = commitQueue.then(() => _commitFileToGitHub(filePath, data, commitMessage));
-  commitQueue = pending.catch(() => {});
-  return pending;
-}
-
-function writeLocalFile(filePath, data) {
-  try {
-    const fullPath = path.join(__dirname, filePath);
-    fs.writeFileSync(fullPath, JSON.stringify(data, null, 2) + '\n');
-  } catch (err) {
-    console.error(`Failed to write local ${filePath}:`, err.message);
-  }
-}
-
-async function _commitFileToGitHub(filePath, data, commitMessage) {
-  const { token, repo } = config.github;
-  if (!token || !repo) throw new Error('GITHUB_TOKEN and GITHUB_REPO are not configured on the server');
-
-  const apiUrl = `https://api.github.com/repos/${repo}/contents/${filePath}`;
-  const headers = {
-    'Authorization': `token ${token}`,
-    'Accept': 'application/vnd.github.v3+json',
-    'Content-Type': 'application/json'
-  };
-
-  let sha;
-  const getResponse = await fetch(apiUrl, { headers });
-  if (getResponse.ok) {
-    const result = await getResponse.json();
-    sha = result.sha;
-  }
-
-  const content = Buffer.from(JSON.stringify(data, null, 2) + '\n').toString('base64');
-  const body = {
-    message: commitMessage,
-    content,
-    ...(sha ? { sha } : {})
-  };
-
-  const putResponse = await fetch(apiUrl, {
-    method: 'PUT',
-    headers,
-    body: JSON.stringify(body)
-  });
-
-  if (!putResponse.ok) {
-    const text = await putResponse.text();
-    throw new Error(`GitHub API returned ${putResponse.status}: ${text}`);
-  }
-}
-
 async function addRepoIfNew(repoKey) {
   if (repos.includes(repoKey)) return;
   repos.push(repoKey);
   repos.sort();
   try {
-    await commitFileToGitHub('repos.json', repos, `repos: add ${repoKey}`);
-    writeLocalFile('repos.json', repos);
+    await persistFile('repos.json', repos, `repos: add ${repoKey}`);
     console.log(`New repo discovered and saved: ${repoKey}`);
   } catch (err) {
-    console.error(`Failed to commit repos.json for ${repoKey}:`, err.message);
+    console.error(`Failed to persist repos.json for ${repoKey}:`, err.message);
   }
 }
 
@@ -1907,12 +1829,10 @@ app.post('/register', async (req, res) => {
     const updatedUsers = [...users, newUser];
     users.push(newUser);
 
-    // Commit to GitHub to persist across deploys
     try {
-      await commitFileToGitHub('users.json', updatedUsers, `register: add ${name}`);
-      writeLocalFile('users.json', updatedUsers);
+      await persistFile('users.json', updatedUsers, `register: add ${name}`);
     } catch (err) {
-      console.error('Failed to commit users.json to GitHub:', err.message);
+      console.error('Failed to persist users.json:', err.message);
       return res.status(500).json({ error: 'Registered locally but failed to save permanently. Ask an admin to check the server logs.' });
     }
 
@@ -1945,10 +1865,9 @@ app.post('/unregister', async (req, res) => {
     const updatedUsers = users.filter((_, i) => i !== userIndex);
 
     try {
-      await commitFileToGitHub('users.json', updatedUsers, `unregister: remove ${removedUser.name}`);
-      writeLocalFile('users.json', updatedUsers);
+      await persistFile('users.json', updatedUsers, `unregister: remove ${removedUser.name}`);
     } catch (err) {
-      console.error('Failed to commit users.json to GitHub:', err.message);
+      console.error('Failed to persist users.json:', err.message);
       return res.status(500).json({ error: 'Failed to save changes. Ask an admin to check the server logs.' });
     }
 
@@ -2027,10 +1946,9 @@ app.post('/edit', async (req, res) => {
     const updatedUsers = [...users];
 
     try {
-      await commitFileToGitHub('users.json', updatedUsers, `edit: update ${updatedUser.name}`);
-      writeLocalFile('users.json', updatedUsers);
+      await persistFile('users.json', updatedUsers, `edit: update ${updatedUser.name}`);
     } catch (err) {
-      console.error('Failed to commit users.json to GitHub:', err.message);
+      console.error('Failed to persist users.json:', err.message);
       return res.status(500).json({ error: 'Updated locally but failed to save permanently. Ask an admin to check the server logs.' });
     }
 
@@ -2102,7 +2020,7 @@ app.get('/health', (req, res) => {
 });
 
 // Start server
-const port = _.get(config, 'port', 3000);
+const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`PR Comment Notifier running on port ${port}`);
   console.log(`Register: http://localhost:${port}/register`);

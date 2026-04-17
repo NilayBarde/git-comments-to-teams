@@ -32,12 +32,20 @@ npm install
 
 ### 2. Configure Environment Variables
 
-Create a `.env` file:
+Create a `.env` file. The persistence backend is auto-detected from available tokens, or set explicitly:
 
 ```bash
-# Required — GitHub token and repo for persisting user/repo config
+# Persistence backend: 'local' (default), 'github', or 'gitlab'
+# PERSISTENCE_BACKEND=local
+
+# GitHub backend — persist config by committing to a GitHub repo
 GITHUB_TOKEN=ghp_your_personal_access_token
 GITHUB_REPO=YourUsername/your-config-repo
+
+# GitLab backend — persist config by committing to a GitLab repo
+# GITLAB_TOKEN=your-gitlab-project-access-token
+# GITLAB_PROJECT_ID=12345
+# GITLAB_URL=https://gitlab.disney.com
 
 # Optional — webhook secrets for verification
 GITHUB_WEBHOOK_SECRET=your-github-secret
@@ -231,8 +239,12 @@ curl "https://gitlab.com/api/v4/users?username=YOUR_USERNAME"
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GITHUB_TOKEN` | Yes | GitHub personal access token for committing config changes |
-| `GITHUB_REPO` | Yes | GitHub repo for persisting `users.json` and `repos.json` (e.g., `NilayBarde/git-comments-to-teams`) |
+| `PERSISTENCE_BACKEND` | No | `local` (default), `github`, or `gitlab`. Auto-detected from available tokens if not set. |
+| `GITHUB_TOKEN` | `github` backend | GitHub personal access token for committing config changes |
+| `GITHUB_REPO` | `github` backend | GitHub repo for persisting config (e.g., `NilayBarde/git-comments-to-teams`) |
+| `GITLAB_TOKEN` | `gitlab` backend | GitLab project access token for committing config changes |
+| `GITLAB_PROJECT_ID` | `gitlab` backend | GitLab project ID (numeric) for the config repo |
+| `GITLAB_URL` | `gitlab` backend | GitLab instance URL (default: `https://gitlab.com`) |
 | `GITLAB_WEBHOOK_TOKEN` | No | Secret token for GitLab webhook verification |
 | `GITHUB_WEBHOOK_SECRET` | No | Secret for GitHub webhook signature verification |
 | `ADMIN_WEBHOOK_URL` | No | Teams webhook URL for admin health alerts |
@@ -257,6 +269,24 @@ To test webhooks locally, use the test script:
 ```bash
 node test-webhook.js gitlab
 node test-webhook.js github
+```
+
+### Docker
+
+Build and run with Docker:
+
+```bash
+docker build -t pr-comment-notifier .
+docker run -p 3000:3000 --env-file .env pr-comment-notifier
+```
+
+For persistent local storage, mount a volume for the config files:
+
+```bash
+docker run -p 3000:3000 --env-file .env \
+  -v $(pwd)/users.json:/app/users.json \
+  -v $(pwd)/repos.json:/app/repos.json \
+  pr-comment-notifier
 ```
 
 ---
