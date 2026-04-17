@@ -19,6 +19,20 @@
     "gitlab": {
       "username": "Ryan.Kawahara",
       "userId": 30126
+    },
+    "notifications": {
+      "comments": true,
+      "mentions": true,
+      "approvals": true,
+      "merges": true,
+      "pipelineFailures": true,
+      "pipelineSuccesses": false,
+      "reviewRequests": false,
+      "sonarComments": false,
+      "aiReviewComments": false,
+      "selfComments": false,
+      "selfMerges": false,
+      "selfReviewRequests": false
     }
   },
   {
