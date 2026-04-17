@@ -1468,7 +1468,7 @@ function getRegistrationPage() {
 <div class="container">
   <h1>PR Comment Notifier</h1>
   <p class="subtitle">Sign up to get Teams notifications for comments, reviews, merges, and pipeline events on your MRs/PRs.</p>
-  <div style="font-size:.85rem;margin-bottom:1rem"><a href="/edit" style="color:#4f6ef7;text-decoration:none">Edit settings</a> · <a href="/unregister" style="color:#4f6ef7;text-decoration:none">Unregister</a></div>
+  <div style="font-size:.85rem;margin-bottom:1rem"><a href="/" style="color:#4f6ef7;text-decoration:none">Home</a> · <a href="/edit" style="color:#4f6ef7;text-decoration:none">Edit settings</a> · <a href="/unregister" style="color:#4f6ef7;text-decoration:none">Unregister</a></div>
 
   <div class="card">
     <details>
@@ -1628,7 +1628,7 @@ function getUnregisterPage() {
 <div class="container">
   <h1>Unsubscribe</h1>
   <p class="subtitle">Remove yourself from PR Comment Notifier. You'll stop receiving Teams notifications.</p>
-  <div style="font-size:.85rem;margin-bottom:1rem"><a href="/register" style="color:#4f6ef7;text-decoration:none">Register</a> · <a href="/edit" style="color:#4f6ef7;text-decoration:none">Edit settings</a></div>
+  <div style="font-size:.85rem;margin-bottom:1rem"><a href="/" style="color:#4f6ef7;text-decoration:none">Home</a> · <a href="/register" style="color:#4f6ef7;text-decoration:none">Register</a> · <a href="/edit" style="color:#4f6ef7;text-decoration:none">Edit settings</a></div>
   <form id="unregForm" class="card">
     <div class="field">
       <label for="gitlabUsername">Your GitLab Username</label>
@@ -1712,7 +1712,7 @@ function getEditPage() {
 <div class="container">
   <h1>Edit Settings</h1>
   <p class="subtitle">Update your PR Comment Notifier configuration.</p>
-  <div class="nav"><a href="/register">Register</a> · <a href="/unregister">Unregister</a></div>
+  <div class="nav"><a href="/">Home</a> · <a href="/register">Register</a> · <a href="/unregister">Unregister</a></div>
 
   <div id="lookupCard" class="card">
     <div class="field">
@@ -1851,6 +1851,73 @@ document.getElementById('editForm').addEventListener('submit', async (e) => {
 }
 
 // ── Routes ──
+
+app.get('/', (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PR Comment Notifier</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f6f8; color: #1a1a2e; min-height: 100vh; display: flex; justify-content: center; padding: 2rem 1rem; }
+  .container { max-width: 540px; width: 100%; }
+  h1 { font-size: 1.5rem; margin-bottom: .25rem; }
+  .subtitle { color: #555; margin-bottom: 1.5rem; font-size: .95rem; line-height: 1.5; }
+  .card { background: #fff; border-radius: 12px; padding: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 1.25rem; }
+  .card h2 { font-size: 1.05rem; margin-bottom: .5rem; }
+  .card p { font-size: .9rem; color: #555; line-height: 1.5; margin-bottom: .75rem; }
+  .card a { display: inline-block; padding: .5rem 1rem; background: #4f6ef7; color: #fff; border-radius: 8px; font-size: .9rem; font-weight: 600; text-decoration: none; transition: background .15s; }
+  .card a:hover { background: #3b5de7; }
+  .features { margin-top: .25rem; }
+  .features li { font-size: .85rem; color: #444; line-height: 1.6; margin-bottom: .25rem; list-style: none; }
+  .features li::before { content: "✓ "; color: #4f6ef7; font-weight: 700; }
+  .footer { text-align: center; font-size: .8rem; color: #999; margin-top: .5rem; }
+  .footer a { color: #4f6ef7; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>PR Comment Notifier</h1>
+  <p class="subtitle">Get Microsoft Teams notifications for comments, reviews, merges, and pipeline events on your GitHub PRs and GitLab MRs.</p>
+
+  <div class="card">
+    <h2>New here?</h2>
+    <p>Sign up with your Teams webhook URL and choose which notifications you want.</p>
+    <a href="/register">Register</a>
+  </div>
+
+  <div class="card">
+    <h2>Already registered?</h2>
+    <p>Update your webhook URL, usernames, aliases, or notification preferences.</p>
+    <a href="/edit">Edit Settings</a>
+  </div>
+
+  <div class="card">
+    <h2>Want to leave?</h2>
+    <p>Remove yourself from the notification system.</p>
+    <a href="/unregister">Unregister</a>
+  </div>
+
+  <div class="card">
+    <h2>What you get</h2>
+    <ul class="features">
+      <li>Comments and @mentions on your MRs/PRs</li>
+      <li>Approvals and changes requested</li>
+      <li>Merge notifications</li>
+      <li>Review request assignments</li>
+      <li>Pipeline failures with smart deduplication</li>
+      <li>Pipeline recovery alerts when builds are fixed</li>
+      <li>Per-notification type toggles</li>
+    </ul>
+  </div>
+
+  <p class="footer"><a href="/health">Health check</a></p>
+</div>
+</body>
+</html>`);
+});
 
 app.get('/register', (req, res) => {
   res.send(getRegistrationPage());
