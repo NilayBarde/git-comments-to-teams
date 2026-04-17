@@ -666,7 +666,7 @@ function appendSettingsLink(card) {
   const actions = content.actions || [];
   actions.push({
     type: 'Action.OpenUrl',
-    title: '⚙ Notifications',
+    title: 'Notifications',
     url: EDIT_SETTINGS_URL
   });
   content.actions = actions;
