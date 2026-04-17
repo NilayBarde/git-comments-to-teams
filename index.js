@@ -87,7 +87,8 @@ const ALWAYS_IGNORED_BOT_PATTERNS = [
 
 const NOTIFICATION_DEFAULTS = {
   comments: true, mentions: true, approvals: true,
-  merges: true, pipelines: true, reviewRequests: true,
+  merges: true, pipelineFailures: true, pipelineSuccesses: false,
+  reviewRequests: true,
   sonarComments: false, aiReviewComments: false,
   selfComments: false, selfMerges: false,
   selfReviewRequests: false
@@ -409,17 +410,17 @@ function parseGitLabPipelineEvent(body) {
     return;
   }
 
-  // Only notify for pipelines associated with a merge request
   const mergeRequest = _.get(body, 'merge_request');
-  if (!mergeRequest) {
-    console.log(`Ignoring pipeline - no merge_request in payload (source: ${pipelineSource}, ref: ${ref}). Pipeline events must come from MR pipelines.`);
+  const prAuthor = _.get(mergeRequest, 'author_id') || _.get(body, 'user.id');
+
+  if (!prAuthor) {
+    console.log('Ignoring pipeline - could not determine author from merge_request or user');
     return;
   }
 
-  const prAuthor = _.get(mergeRequest, 'author_id');
-  const prTitle = _.get(mergeRequest, 'title', '');
+  const prTitle = _.get(mergeRequest, 'title', '') || _.get(body, 'commit.title', '');
   const prUrl = _.get(mergeRequest, 'url', '');
-  const branch = _.get(body, 'object_attributes.ref', '');
+  const branch = ref;
   const pipelineId = _.get(body, 'object_attributes.id');
   const pipelineUrl = `${_.get(body, 'project.web_url', '')}/pipelines/${pipelineId}`;
   const repoName = _.get(body, 'project.path_with_namespace', '');
@@ -435,7 +436,6 @@ function parseGitLabPipelineEvent(body) {
     repoName
   };
 
-  // Collect failed stages/jobs for context when pipeline failed
   if (isFailed) {
     const builds = _.get(body, 'builds', []);
     result.failedJobs = builds
@@ -1169,11 +1169,12 @@ async function processWebhook(source, data, signature) {
       const prOwner = findPROwner(source, prAuthor);
 
       if (prOwner) {
-        if (!userWantsNotification(prOwner, 'pipelines')) {
-          console.log(`Skipping pipeline notification for ${prOwner.name} (disabled by preferences)`);
+        const isFailed = pipelineType === 'pipeline_failed';
+        const prefKey = isFailed ? 'pipelineFailures' : 'pipelineSuccesses';
+        if (!userWantsNotification(prOwner, prefKey)) {
+          console.log(`Skipping pipeline ${isFailed ? 'failure' : 'success'} notification for ${prOwner.name} (disabled by preferences)`);
           return { processed: false, reason: DISABLED_BY_PREFS };
         }
-        const isFailed = pipelineType === 'pipeline_failed';
         const statusLabel = isFailed ? 'failure' : 'success';
         console.log(`Processing ${source} pipeline ${statusLabel} for ${prOwner.name}'s "${pipelineEvent.prTitle}"`);
         const card = isFailed ? createPipelineFailureCard(pipelineEvent) : createPipelineSuccessCard(pipelineEvent);
@@ -1181,8 +1182,8 @@ async function processWebhook(source, data, signature) {
         return { processed: sent, type: pipelineType, user: prOwner.name, data: pipelineEvent };
       }
 
-      console.log('Ignoring pipeline event - MR author not in configured users');
-      return { processed: false, reason: 'MR author not configured' };
+      console.log('Ignoring pipeline event - pipeline owner not in configured users');
+      return { processed: false, reason: 'pipeline owner not configured' };
     }
   }
 
@@ -1290,12 +1291,15 @@ const NOTIF_CHECKBOXES_HTML = `
       <label class="toggle"><input type="checkbox" id="notif-mentions" checked> @mentions in comments</label>
       <label class="toggle"><input type="checkbox" id="notif-approvals" checked> Approvals and change requests</label>
       <label class="toggle"><input type="checkbox" id="notif-merges" checked> PRs/MRs merged</label>
-      <label class="toggle"><input type="checkbox" id="notif-pipelines" checked> Pipeline results</label>
+      <label class="toggle"><input type="checkbox" id="notif-pipelineFailures" checked> Pipeline failures</label>
       <label class="toggle"><input type="checkbox" id="notif-reviewRequests" checked> Review requests</label>
       <hr style="margin:.75rem 0;border:none;border-top:1px solid #e0e0e0">
       <div class="hint">Bot comments (off by default)</div>
       <label class="toggle"><input type="checkbox" id="notif-sonarComments"> SonarQube analysis comments</label>
       <label class="toggle"><input type="checkbox" id="notif-aiReviewComments"> AI review / project bot comments</label>
+      <hr style="margin:.75rem 0;border:none;border-top:1px solid #e0e0e0">
+      <div class="hint">Extra notifications (off by default)</div>
+      <label class="toggle"><input type="checkbox" id="notif-pipelineSuccesses"> Pipeline successes</label>
       <hr style="margin:.75rem 0;border:none;border-top:1px solid #e0e0e0">
       <div class="hint">Self-activity (off by default)</div>
       <label class="toggle"><input type="checkbox" id="notif-selfComments"> Your own comments on your PRs/MRs</label>
@@ -1308,7 +1312,8 @@ const NOTIF_COLLECT_JS = `{
           mentions: document.getElementById('notif-mentions').checked,
           approvals: document.getElementById('notif-approvals').checked,
           merges: document.getElementById('notif-merges').checked,
-          pipelines: document.getElementById('notif-pipelines').checked,
+          pipelineFailures: document.getElementById('notif-pipelineFailures').checked,
+          pipelineSuccesses: document.getElementById('notif-pipelineSuccesses').checked,
           reviewRequests: document.getElementById('notif-reviewRequests').checked,
           sonarComments: document.getElementById('notif-sonarComments').checked,
           aiReviewComments: document.getElementById('notif-aiReviewComments').checked,
@@ -1663,7 +1668,8 @@ async function lookupUser() {
     document.getElementById('notif-mentions').checked = notifs.mentions !== false;
     document.getElementById('notif-approvals').checked = notifs.approvals !== false;
     document.getElementById('notif-merges').checked = notifs.merges !== false;
-    document.getElementById('notif-pipelines').checked = notifs.pipelines !== false;
+    document.getElementById('notif-pipelineFailures').checked = notifs.pipelineFailures !== false;
+    document.getElementById('notif-pipelineSuccesses').checked = notifs.pipelineSuccesses === true;
     document.getElementById('notif-reviewRequests').checked = notifs.reviewRequests !== false;
     document.getElementById('notif-sonarComments').checked = notifs.sonarComments === true;
     document.getElementById('notif-aiReviewComments').checked = notifs.aiReviewComments === true;
