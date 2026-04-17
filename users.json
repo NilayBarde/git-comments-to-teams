@@ -110,5 +110,28 @@
       "selfMerges": false,
       "selfReviewRequests": false
     }
+  },
+  {
+    "name": "aaron.ching",
+    "teamsWebhookUrl": "https://default56b731a8a2ac4c32bf6b616810e913.c6.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/5f057a073be542e9ae53473530dc6fda/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=SlqrWWXZNyNEkWIkZuwq6-Xewj_os4E1Zrnt0CpTFSA",
+    "gitlab": {
+      "username": "Aaron.Ching",
+      "userId": 18105
+    },
+    "notifications": {
+      "comments": true,
+      "mentions": true,
+      "approvals": true,
+      "merges": true,
+      "pipelineFailures": true,
+      "pipelineRecoveries": true,
+      "reviewRequests": true,
+      "codeownerReviewRequests": true,
+      "sonarComments": true,
+      "aiReviewComments": true,
+      "selfComments": false,
+      "selfMerges": false,
+      "selfReviewRequests": false
+    }
   }
 ]
