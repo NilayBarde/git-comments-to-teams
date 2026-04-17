@@ -659,6 +659,20 @@ function parseGitLabPayload(body) {
   };
 }
 
+const EDIT_SETTINGS_URL = 'https://git-comments-to-teams.onrender.com/edit';
+
+function appendSettingsLink(card) {
+  const content = card.attachments[0].content;
+  const actions = content.actions || [];
+  actions.push({
+    type: 'Action.OpenUrl',
+    title: '⚙ Notifications',
+    url: EDIT_SETTINGS_URL
+  });
+  content.actions = actions;
+  return card;
+}
+
 /**
  * Create Teams Adaptive Card for the notification
  */
@@ -740,7 +754,7 @@ function createAdaptiveCard(data) {
     }
   ];
 
-  return card;
+  return appendSettingsLink(card);
 }
 
 /**
@@ -807,7 +821,7 @@ function createMentionCard(data, mentionedAs) {
     ]
   };
 
-  return card;
+  return appendSettingsLink(card);
 }
 
 /**
@@ -858,7 +872,7 @@ function createMergeCard(data) {
     ]
   };
 
-  return card;
+  return appendSettingsLink(card);
 }
 
 /**
@@ -928,7 +942,7 @@ function createApprovalCard(data) {
     });
   }
 
-  return card;
+  return appendSettingsLink(card);
 }
 
 function createReviewRequestedCard(data) {
@@ -937,7 +951,7 @@ function createReviewRequestedCard(data) {
   const prLabel = source === 'github' ? 'PR' : 'MR';
   const displayRequester = humanizeRequester(requestedBy);
 
-  return {
+  const card = {
     type: 'message',
     attachments: [{
       contentType: 'application/vnd.microsoft.card.adaptive',
@@ -974,6 +988,8 @@ function createReviewRequestedCard(data) {
       }
     }]
   };
+
+  return appendSettingsLink(card);
 }
 
 /**
@@ -1033,7 +1049,7 @@ function createPipelineFailureCard(data) {
     ]
   };
 
-  return card;
+  return appendSettingsLink(card);
 }
 
 /**
@@ -1087,7 +1103,7 @@ function createPipelineRecoveryCard(data) {
     ]
   };
 
-  return card;
+  return appendSettingsLink(card);
 }
 
 /**
