@@ -100,7 +100,7 @@
       "approvals": true,
       "merges": true,
       "pipelineFailures": true,
-      "pipelineSuccesses": false,
+      "pipelineRecoveries": true,
       "reviewRequests": true,
       "sonarComments": true,
       "aiReviewComments": true,

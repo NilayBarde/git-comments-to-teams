@@ -7,6 +7,10 @@ import { loadFile, persistFile } from './persistence.js';
 const GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET;
 const GITLAB_WEBHOOK_TOKEN = process.env.GITLAB_WEBHOOK_TOKEN;
 
+const PIPELINE_STATE_FILE = 'pipeline-state.json';
+const PIPELINE_STATE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+let pipelineState = loadFile(PIPELINE_STATE_FILE) || {};
+
 let users = [];
 try {
   users = loadFile('users.json') || (process.env.USERS_CONFIG ? JSON.parse(process.env.USERS_CONFIG) : null);
@@ -87,7 +91,7 @@ const ALWAYS_IGNORED_BOT_PATTERNS = [
 
 const NOTIFICATION_DEFAULTS = {
   comments: true, mentions: true, approvals: true,
-  merges: true, pipelineFailures: true, pipelineSuccesses: false,
+  merges: true, pipelineFailures: true, pipelineRecoveries: true,
   reviewRequests: true,
   sonarComments: false, aiReviewComments: false,
   selfComments: false, selfMerges: false,
@@ -262,6 +266,7 @@ function parseGitLabMergeEvent(body) {
   const prUrl = _.get(mergeRequest, 'url', '');
   const mergedBy = _.get(body, 'user.username', '');
   const repoName = _.get(body, 'project.path_with_namespace', '');
+  const sourceBranch = _.get(mergeRequest, 'source_branch', '');
 
   return {
     type: 'merge',
@@ -270,7 +275,8 @@ function parseGitLabMergeEvent(body) {
     prTitle,
     prUrl,
     mergedBy,
-    repoName
+    repoName,
+    sourceBranch
   };
 }
 
@@ -293,6 +299,7 @@ function parseGitHubMergeEvent(body) {
   const prUrl = _.get(pullRequest, 'html_url', '');
   const mergedBy = _.get(pullRequest, 'merged_by.login', '') || _.get(body, 'sender.login', '');
   const repoName = _.get(body, 'repository.full_name', '');
+  const sourceBranch = _.get(pullRequest, 'head.ref', '');
 
   return {
     type: 'merge',
@@ -301,7 +308,8 @@ function parseGitHubMergeEvent(body) {
     prTitle,
     prUrl,
     mergedBy,
-    repoName
+    repoName,
+    sourceBranch
   };
 }
 
@@ -444,6 +452,53 @@ function parseGitLabPipelineEvent(body) {
   }
 
   return result;
+}
+
+function pipelineStateKey(repoName, branch) {
+  return `${repoName}:${branch}`;
+}
+
+function prunePipelineState() {
+  const now = Date.now();
+  for (const key of Object.keys(pipelineState)) {
+    if (now - pipelineState[key].timestamp > PIPELINE_STATE_TTL_MS) {
+      delete pipelineState[key];
+    }
+  }
+}
+
+function savePipelineState() {
+  prunePipelineState();
+  persistFile(PIPELINE_STATE_FILE, pipelineState);
+}
+
+function checkPipelineDedup(pipelineEvent) {
+  const { type, repoName, branch, failedJobs } = pipelineEvent;
+  const key = pipelineStateKey(repoName, branch);
+  const prev = pipelineState[key];
+  const isFailed = type === 'pipeline_failed';
+
+  if (isFailed) {
+    const sortedJobs = (failedJobs || []).slice().sort();
+    const prevJobs = prev?.failedJobs || [];
+    const isDuplicate = prev?.status === 'failed' &&
+      sortedJobs.length === prevJobs.length &&
+      sortedJobs.every((job, i) => job === prevJobs[i]);
+
+    pipelineState[key] = { status: 'failed', failedJobs: sortedJobs, timestamp: Date.now() };
+    savePipelineState();
+
+    if (isDuplicate) return 'suppress';
+    return 'notify_failure';
+  }
+
+  // Pipeline succeeded
+  const wasFailure = prev?.status === 'failed';
+  delete pipelineState[key];
+  savePipelineState();
+
+  if (wasFailure) return 'notify_recovery';
+  return 'suppress';
 }
 
 /**
@@ -969,9 +1024,9 @@ function createPipelineFailureCard(data) {
 }
 
 /**
- * Create Teams Adaptive Card for pipeline success notifications
+ * Create Teams Adaptive Card for pipeline recovery notifications
  */
-function createPipelineSuccessCard(data) {
+function createPipelineRecoveryCard(data) {
   const { prTitle, prUrl, branch, pipelineUrl, repoName } = data;
 
   const card = {
@@ -987,7 +1042,7 @@ function createPipelineSuccessCard(data) {
           body: [
             {
               type: 'TextBlock',
-              text: '🟢 Pipeline Passed on your MR',
+              text: '🟢 Pipeline Fixed! Previously failing pipeline now passes',
               weight: 'Bolder',
               size: 'Medium',
               color: 'Good'
@@ -1071,7 +1126,15 @@ async function processWebhook(source, data, signature) {
 
   // Handle merge events
   if (mergeEvent) {
-    const { prAuthor } = mergeEvent;
+    const { prAuthor, repoName: mergeRepo, sourceBranch } = mergeEvent;
+    if (mergeRepo && sourceBranch) {
+      const stateKey = pipelineStateKey(mergeRepo, sourceBranch);
+      if (pipelineState[stateKey]) {
+        delete pipelineState[stateKey];
+        savePipelineState();
+        console.log(`Cleared pipeline state for merged branch ${mergeRepo}:${sourceBranch}`);
+      }
+    }
     const prOwner = findPROwner(source, prAuthor);
     
     if (prOwner) {
@@ -1168,22 +1231,32 @@ async function processWebhook(source, data, signature) {
       const { prAuthor, type: pipelineType } = pipelineEvent;
       const prOwner = findPROwner(source, prAuthor);
 
-      if (prOwner) {
-        const isFailed = pipelineType === 'pipeline_failed';
-        const prefKey = isFailed ? 'pipelineFailures' : 'pipelineSuccesses';
-        if (!userWantsNotification(prOwner, prefKey)) {
-          console.log(`Skipping pipeline ${isFailed ? 'failure' : 'success'} notification for ${prOwner.name} (disabled by preferences)`);
-          return { processed: false, reason: DISABLED_BY_PREFS };
-        }
-        const statusLabel = isFailed ? 'failure' : 'success';
-        console.log(`Processing ${source} pipeline ${statusLabel} for ${prOwner.name}'s "${pipelineEvent.prTitle}"`);
-        const card = isFailed ? createPipelineFailureCard(pipelineEvent) : createPipelineSuccessCard(pipelineEvent);
-        const sent = await sendToTeams(card, prOwner.teamsWebhookUrl);
-        return { processed: sent, type: pipelineType, user: prOwner.name, data: pipelineEvent };
+      if (!prOwner) {
+        console.log('Ignoring pipeline event - pipeline owner not in configured users');
+        return { processed: false, reason: 'pipeline owner not configured' };
       }
 
-      console.log('Ignoring pipeline event - pipeline owner not in configured users');
-      return { processed: false, reason: 'pipeline owner not configured' };
+      const dedupResult = checkPipelineDedup(pipelineEvent);
+
+      if (dedupResult === 'suppress') {
+        const label = pipelineType === 'pipeline_failed' ? 'failure (duplicate)' : 'success (no prior failure)';
+        console.log(`Suppressing pipeline ${label} for ${pipelineEvent.repoName}:${pipelineEvent.branch}`);
+        return { processed: false, reason: `pipeline ${label} suppressed` };
+      }
+
+      const isRecovery = dedupResult === 'notify_recovery';
+      const prefKey = isRecovery ? 'pipelineRecoveries' : 'pipelineFailures';
+      if (!userWantsNotification(prOwner, prefKey)) {
+        const label = isRecovery ? 'recovery' : 'failure';
+        console.log(`Skipping pipeline ${label} notification for ${prOwner.name} (disabled by preferences)`);
+        return { processed: false, reason: DISABLED_BY_PREFS };
+      }
+      const label = isRecovery ? 'recovery' : 'failure';
+      console.log(`Processing ${source} pipeline ${label} for ${prOwner.name}'s "${pipelineEvent.prTitle}"`);
+      const card = isRecovery ? createPipelineRecoveryCard(pipelineEvent) : createPipelineFailureCard(pipelineEvent);
+      const resultType = isRecovery ? 'pipeline_recovered' : pipelineType;
+      const sent = await sendToTeams(card, prOwner.teamsWebhookUrl);
+      return { processed: sent, type: resultType, user: prOwner.name, data: pipelineEvent };
     }
   }
 
@@ -1292,14 +1365,12 @@ const NOTIF_CHECKBOXES_HTML = `
       <label class="toggle"><input type="checkbox" id="notif-approvals" checked> Approvals and change requests</label>
       <label class="toggle"><input type="checkbox" id="notif-merges" checked> PRs/MRs merged</label>
       <label class="toggle"><input type="checkbox" id="notif-pipelineFailures" checked> Pipeline failures</label>
+      <label class="toggle"><input type="checkbox" id="notif-pipelineRecoveries" checked> Pipeline recovered (fixed after failure)</label>
       <label class="toggle"><input type="checkbox" id="notif-reviewRequests" checked> Review requests</label>
       <hr style="margin:.75rem 0;border:none;border-top:1px solid #e0e0e0">
       <div class="hint">Bot comments (off by default)</div>
       <label class="toggle"><input type="checkbox" id="notif-sonarComments"> SonarQube analysis comments</label>
       <label class="toggle"><input type="checkbox" id="notif-aiReviewComments"> AI review / project bot comments</label>
-      <hr style="margin:.75rem 0;border:none;border-top:1px solid #e0e0e0">
-      <div class="hint">Extra notifications (off by default)</div>
-      <label class="toggle"><input type="checkbox" id="notif-pipelineSuccesses"> Pipeline successes</label>
       <hr style="margin:.75rem 0;border:none;border-top:1px solid #e0e0e0">
       <div class="hint">Self-activity (off by default)</div>
       <label class="toggle"><input type="checkbox" id="notif-selfComments"> Your own comments on your PRs/MRs</label>
@@ -1313,7 +1384,7 @@ const NOTIF_COLLECT_JS = `{
           approvals: document.getElementById('notif-approvals').checked,
           merges: document.getElementById('notif-merges').checked,
           pipelineFailures: document.getElementById('notif-pipelineFailures').checked,
-          pipelineSuccesses: document.getElementById('notif-pipelineSuccesses').checked,
+          pipelineRecoveries: document.getElementById('notif-pipelineRecoveries').checked,
           reviewRequests: document.getElementById('notif-reviewRequests').checked,
           sonarComments: document.getElementById('notif-sonarComments').checked,
           aiReviewComments: document.getElementById('notif-aiReviewComments').checked,
@@ -1669,7 +1740,7 @@ async function lookupUser() {
     document.getElementById('notif-approvals').checked = notifs.approvals !== false;
     document.getElementById('notif-merges').checked = notifs.merges !== false;
     document.getElementById('notif-pipelineFailures').checked = notifs.pipelineFailures !== false;
-    document.getElementById('notif-pipelineSuccesses').checked = notifs.pipelineSuccesses === true;
+    document.getElementById('notif-pipelineRecoveries').checked = notifs.pipelineRecoveries !== false;
     document.getElementById('notif-reviewRequests').checked = notifs.reviewRequests !== false;
     document.getElementById('notif-sonarComments').checked = notifs.sonarComments === true;
     document.getElementById('notif-aiReviewComments').checked = notifs.aiReviewComments === true;
