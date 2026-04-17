@@ -72,7 +72,7 @@
   },
   {
     "name": "jacques.plante",
-    "teamsWebhookUrl": "https://default56b731a8a2ac4c32bf6b616810e913.c6.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/2f326d6b6d684379948f97c4231a82cc/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=ploacax6SoaYFXZKEjogwVWKWokn1TunD1U9mCuDmtA",
+    "teamsWebhookUrl": "https://default56b731a8a2ac4c32bf6b616810e913.c6.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/fb61c0345b874334a1520fa0de1da75f/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=c6qWQIzA73E-BFIbLNyALPoCp1jhcOD_lcfG0Q7GuPg",
     "gitlab": {
       "username": "Jacques.Plante",
       "userId": 15494
