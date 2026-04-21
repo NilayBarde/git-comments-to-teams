@@ -85,12 +85,15 @@
       "pipelineRecoveries": true,
       "reviewRequests": true,
       "codeownerReviewRequests": true,
-      "sonarComments": false,
-      "aiReviewComments": false,
-      "selfComments": false,
-      "selfMerges": false,
-      "selfReviewRequests": false
-    }
+      "sonarComments": true,
+      "aiReviewComments": true,
+      "selfComments": true,
+      "selfMerges": true,
+      "selfReviewRequests": true
+    },
+    "mentionAliases": [
+      "espn-vidcom-web-dev"
+    ]
   },
   {
     "name": "david.murley",
