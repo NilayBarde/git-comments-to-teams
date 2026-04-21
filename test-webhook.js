@@ -84,15 +84,15 @@ async function sendTestWebhook(type) {
 
   switch (type) {
     case 'github':
-      url = `${BASE_URL}/webhook/github`;
+      url = `${BASE_URL}/webhook`;
       payload = githubPayload;
       break;
     case 'github-review':
-      url = `${BASE_URL}/webhook/github`;
+      url = `${BASE_URL}/webhook`;
       payload = githubReviewPayload;
       break;
     case 'gitlab':
-      url = `${BASE_URL}/webhook/gitlab`;
+      url = `${BASE_URL}/webhook`;
       payload = gitlabPayload;
       // Add GitLab token header if configured
       // headers['x-gitlab-token'] = 'YOUR_GITLAB_WEBHOOK_TOKEN';

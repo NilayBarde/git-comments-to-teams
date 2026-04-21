@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 const VALID_BACKENDS = ['local', 'github', 'gitlab'];
 const BACKEND = detectBackend();

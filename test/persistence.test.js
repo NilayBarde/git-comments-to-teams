@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { detectBackend, loadFile, persistFile } from '../persistence.js';
+import { detectBackend, loadFile, persistFile } from '../src/lib/persistence.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, '.fixtures');
