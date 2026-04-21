@@ -67,7 +67,7 @@ const app = express();
 app.use(express.json());
 
 // Basic auth for UI routes (only active when BASIC_AUTH_USER is set)
-const OPEN_PATHS = ['/webhook', '/health'];
+const OPEN_PATHS = ['/webhook', '/webhook/github', '/webhook/gitlab', '/health'];
 
 app.use((req, res, next) => {
   const authUser = process.env.BASIC_AUTH_USER;
@@ -330,14 +330,18 @@ app.post('/edit', async (req, res) => {
   }
 });
 
-app.post('/webhook', (req, res) => {
+const webhookHandler = (req, res) => {
   handleWebhook(req, res, {
     users,
     addRepoIfNew,
     githubSecret: GITHUB_WEBHOOK_SECRET,
     gitlabToken: GITLAB_WEBHOOK_TOKEN
   });
-});
+};
+
+app.post('/webhook', webhookHandler);
+app.post('/webhook/github', webhookHandler);
+app.post('/webhook/gitlab', webhookHandler);
 
 app.get('/health', (req, res) => {
   res.json({
