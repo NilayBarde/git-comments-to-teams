@@ -310,6 +310,11 @@ app.post('/edit', async (req, res) => {
       updatedUser.notifications = notifications;
     }
 
+    if (_.isEqual(users[userIndex], updatedUser)) {
+      console.log(`No-op save for ${updatedUser.name} — skipping write`);
+      return res.json({ message: 'No changes to save.' });
+    }
+
     const updatedUsers = [...users];
     updatedUsers[userIndex] = updatedUser;
 
