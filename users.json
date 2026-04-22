@@ -11,7 +11,22 @@
     },
     "mentionAliases": [
       "espn-fitt-betting-team"
-    ]
+    ],
+    "notifications": {
+      "comments": true,
+      "mentions": true,
+      "approvals": true,
+      "merges": true,
+      "pipelineFailures": true,
+      "pipelineRecoveries": true,
+      "reviewRequests": true,
+      "codeownerReviewRequests": true,
+      "sonarComments": false,
+      "aiReviewComments": false,
+      "selfComments": false,
+      "selfMerges": false,
+      "selfReviewRequests": false
+    }
   },
   {
     "name": "ryan",
